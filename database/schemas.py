@@ -6,18 +6,18 @@ from typing import Optional, List, Union
 #Companies
 class CompanyRequest(BaseModel):
     name: str
-    industry: str
+    industry_category: str
     location: str
     capital_amount: int
     revenue: int
-    Company_certification_documents: str
+    company_certification_documents: str
     patent: bool
     delivery_time: int
 
 
 #Products
 class ProductRequest(BaseModel):
-    Company_id: str
+    company_id: str
     product_name: str
     main_raw_materials: str
     product_standard: str
@@ -27,8 +27,8 @@ class ProductRequest(BaseModel):
 
 #VectorDB
 class VectorDBRequest(BaseModel):
-    Product_id: str
-    Company_id: str
+    product_id: str
+    company_id: str
     embedding: List[float]
     metadata_json: dict
 
@@ -37,8 +37,7 @@ class VectorDBRequest(BaseModel):
 class SearchRequest(BaseModel):
     # Required primary inputs
     query_text: str
-    industry: Optional[Union[str, List[str]]] = None
-    country: Optional[Union[str, List[str]]] = None
+    industry_category: str
     top_k: int = 5
 
 
@@ -48,13 +47,32 @@ class SearchRequest(BaseModel):
 #     capacity: Optional[str] = None
 
 
+class ProductSpecifications(BaseModel):
+    Dimensions: str
+    Prediction: float
+    Materials: str
+
+
+class Product(BaseModel):
+    Product_Name: str
+    Main_Raw_Materials: str
+    Product_Specifications: ProductSpecifications
+    Technical_Advantages: str
+    Product_Certification_Materials: str
+
+
 class SearchResult(BaseModel):
-    company: str
-    product: Optional[str] = None
+    Company_Name: str
+    Industry_category: str
+    Location: str
+    capital_amount: int
+    Revenue: int
+    Company_certification_documents: str
+    Product: Product
+    Patent: bool
+    Delivery_time: str
     completeness_score: int
     semantic_score: float
-    # numeric_gap: NumericGap
-    doc_status: str
     total_score: int
 
 

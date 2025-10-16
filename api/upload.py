@@ -81,19 +81,23 @@ async def upload_file(file: UploadFile = File(...)):
     Automatically updates VectorDB for product data.
     Product Data: File must contain an industry category column (e.g., '產業別', 'industry_category').
     """
+    print(f"🚀 UPLOAD START: Processing file {file.filename}")
     file_id = str(uuid.uuid4())
 
     # Check file extension
     filename = (file.filename or "").lower()
     file_extension = filename.split('.')[-1] if '.' in filename else ''
+    print(f"📁 File extension: {file_extension}")
 
     # Read bytes once
     file_bytes = await file.read()
+    print(f"📊 File size: {len(file_bytes)} bytes")
 
     # Decide parser by extension or content-type
     is_json = file_extension in ["json"] or (file.content_type
                                              and "json" in file.content_type)
     is_tabular = file_extension in ["csv", "xlsx", "xls"]
+    print(f"🔍 File type - JSON: {is_json}, Tabular: {is_tabular}")
 
     if not (is_json or is_tabular):
         raise HTTPException(
@@ -102,14 +106,19 @@ async def upload_file(file: UploadFile = File(...)):
 
     try:
         if is_json:
+            print("📝 Parsing JSON file...")
             records = _parse_json_payload(file_bytes)
         else:
+            print("📊 Parsing tabular file...")
             records = _parse_tabular_payload(file_bytes, file_extension)
+        print(f"✅ Parsed {len(records)} records")
     except Exception as e:
+        print(f"❌ Parse error: {e}")
         raise HTTPException(status_code=400,
                             detail=f"Failed to parse file: {e}")
 
     if not records:
+        print("⚠️ No records found in file")
         return {
             "status": "ok",
             "message": "No records found",
@@ -124,39 +133,64 @@ async def upload_file(file: UploadFile = File(...)):
     # Ensure OpenAI API key present if embeddings required
     openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not openai_api_key:
+        print("❌ OPENAI_API_KEY is not set")
         raise HTTPException(status_code=500,
                             detail="OPENAI_API_KEY is not set")
 
     # OpenAI embeddings model
     embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+    print(f"🤖 Using embedding model: {embedding_model}")
 
+    print("💾 Starting database operations...")
     async with async_session() as session:
         try:
-            for rec in records:
+            for i, rec in enumerate(records):
+                print(f"\n📝 Processing record {i+1}/{len(records)}")
+                print(f"   Company: {rec.get('company_name', 'N/A')}")
+                print(f"   Product: {rec.get('product_name', 'N/A')}")
+                print(f"   Industry: {rec.get('industry_category', 'N/A')}")
+
+                # Upsert company
+                print("   🏢 Upserting company...")
                 company_res, company_created = await _upsert_company(
                     session, rec)
                 if company_created:
                     created_counts["companies"] += 1
+                    print(f"   ✅ Created company: {company_res.id}")
                 else:
                     updated_counts["companies"] += 1
+                    print(f"   🔄 Updated company: {company_res.id}")
 
+                # Upsert product
+                print("   📦 Upserting product...")
                 product_res, product_created = await _upsert_product(
                     session, company_res.id, rec)
                 if product_created:
                     created_counts["products"] += 1
+                    print(f"   ✅ Created product: {product_res.id}")
                 else:
                     updated_counts["products"] += 1
+                    print(f"   🔄 Updated product: {product_res.id}")
 
                 # Build metadata and score
+                print("   📊 Building metadata and calculating score...")
                 metadata, score = _build_metadata(rec)
+                print(f"   📈 Data score: {score}")
 
                 # Create embedding text per item
+                print("   🔤 Building embedding text...")
                 embedding_text = _build_embedding_text(metadata)
+                print(
+                    f"   📝 Embedding text length: {len(embedding_text)} chars")
 
-                # Call OpenAI for embedding (supports both old and new clients defensively)
+                # Call OpenAI for embedding
+                print("   🤖 Creating OpenAI embedding...")
                 embedding = await _create_embedding_async(
                     embedding_text, embedding_model, openai_api_key)
+                print(f"   ✅ Embedding created, dimension: {len(embedding)}")
 
+                # Upsert vector
+                print("   🧮 Upserting vector...")
                 vec_res, vec_created = await _upsert_vector(
                     session,
                     company_id=company_res.id,
@@ -165,11 +199,16 @@ async def upload_file(file: UploadFile = File(...)):
                     metadata=metadata)
                 if vec_created:
                     created_counts["vectors"] += 1
+                    print(f"   ✅ Created vector: {vec_res.id}")
                 else:
                     updated_counts["vectors"] += 1
+                    print(f"   🔄 Updated vector: {vec_res.id}")
 
+            print("\n💾 Committing transaction...")
             await session.commit()
-        except Exception:
+            print("✅ Transaction committed successfully")
+        except Exception as e:
+            print(f"❌ Database error: {e}")
             await session.rollback()
             raise
 
@@ -223,8 +262,8 @@ def _normalize_row_from_tabular(row: pd.Series) -> Dict[str, Any]:
 
     # Handle common variants from the screenshot/example
     company_name = get("Company_Name", "company_name", "Company", "name")
-    industry = get("Industry_category", "Industry", "industry_category",
-                   "industry")
+    industry_category = get("Industry_category", "Industry",
+                            "industry_category", "industry")
     location = get("Location", "location")
     capital_amount = get("Capital_Amour", "capital_amount", "Capital_amount")
     revenue = get("Revenue", "revenue")
@@ -272,7 +311,8 @@ def _normalize_row_from_tabular(row: pd.Series) -> Dict[str, Any]:
         "company_name":
         str(company_name).strip() if company_name is not None else None,
         "industry_category":
-        str(industry).strip() if industry is not None else None,
+        str(industry_category).strip()
+        if industry_category is not None else None,
         "location":
         str(location).strip() if location is not None else None,
         "capital_amount":
@@ -366,14 +406,15 @@ async def _upsert_company(session: AsyncSession, rec: Dict[str, Any]):
         select(Companies).where(Companies.name == company_name))
     existing = result.scalars().first()
     if existing:
-        existing.industry = rec.get("industry_category") or existing.industry
+        existing.industry_category = rec.get(
+            "industry_category") or existing.industry_category
         existing.location = rec.get("location") or existing.location
         if rec.get("capital_amount") is not None:
             existing.capital_amount = rec["capital_amount"]
         if rec.get("revenue") is not None:
             existing.revenue = rec["revenue"]
         if rec.get("company_certification_documents") is not None:
-            existing.Company_certification_documents = rec[
+            existing.company_certification_documents = rec[
                 "company_certification_documents"]
         if rec.get("patent") is not None:
             existing.patent = bool(rec["patent"])
@@ -385,11 +426,11 @@ async def _upsert_company(session: AsyncSession, rec: Dict[str, Any]):
         company = Companies(
             id=str(uuid.uuid4()),
             name=company_name,
-            industry=rec.get("industry_category") or "",
+            industry_category=rec.get("industry_category") or "",
             location=rec.get("location") or "",
             capital_amount=rec.get("capital_amount") or 0,
             revenue=rec.get("revenue") or 0,
-            Company_certification_documents=rec.get(
+            company_certification_documents=rec.get(
                 "company_certification_documents") or "",
             patent=bool(rec.get("patent"))
             if rec.get("patent") is not None else False,
@@ -411,7 +452,7 @@ async def _upsert_product(session: AsyncSession, company_id: str,
                             detail="Missing product_name in a record")
 
     result = await session.execute(
-        select(Products).where(Products.Company_id == company_id,
+        select(Products).where(Products.company_id == company_id,
                                Products.product_name == product_name))
     existing = result.scalars().first()
 
@@ -434,7 +475,7 @@ async def _upsert_product(session: AsyncSession, company_id: str,
     else:
         product = Products(
             id=str(uuid.uuid4()),
-            Company_id=company_id,
+            company_id=company_id,
             product_name=product_name,
             main_raw_materials=rec.get("main_raw_materials") or "",
             product_standard=standards,
@@ -477,8 +518,6 @@ def _build_metadata(rec: Dict[str, Any]):
 def _build_embedding_text(metadata: Dict[str, Any]) -> str:
     parts = [
         metadata.get("company_name") or "",
-        metadata.get("industry_category") or "",
-        metadata.get("location") or "",
         metadata.get("product_name") or "",
         metadata.get("main_raw_materials") or "",
         ", ".join(metadata.get("product_standard") or []),
@@ -508,7 +547,7 @@ async def _upsert_vector(session: AsyncSession, company_id: str,
     now = datetime.utcnow().isoformat()
     # Check if there is an existing vector for this product
     result = await session.execute(
-        select(VectorDB).where(VectorDB.Product_id == product_id))
+        select(VectorDB).where(VectorDB.product_id == product_id))
     existing = result.scalars().first()
     if existing:
         existing.embedding = embedding
@@ -518,8 +557,8 @@ async def _upsert_vector(session: AsyncSession, company_id: str,
     else:
         vector = VectorDB(
             id=str(uuid.uuid4()),
-            Product_id=product_id,
-            Company_id=company_id,
+            product_id=product_id,
+            company_id=company_id,
             embedding=embedding,
             metadata_json=metadata,
             created_at=now,
