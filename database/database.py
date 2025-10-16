@@ -58,11 +58,11 @@ class Companies(Base):
     __tablename__ = "Companies"
     id = Column(String, primary_key=True, index=True)
     name = Column(String, nullable=False)
-    industry = Column(String, nullable=False)
+    industry_category = Column(String, nullable=False)
     location = Column(String, nullable=False)
     capital_amount = Column(Integer, nullable=False)
     revenue = Column(Integer, nullable=False)
-    Company_certification_documents = Column(String, nullable=False)
+    company_certification_documents = Column(String, nullable=False)
     patent = Column(Boolean, nullable=False)
     delivery_time = Column(Integer, nullable=False)
     created_at = Column(String, nullable=False)
@@ -72,7 +72,7 @@ class Companies(Base):
 class Products(Base):
     __tablename__ = "Products"
     id = Column(String, primary_key=True, index=True)
-    Company_id = Column(String, ForeignKey("Companies.id"))
+    company_id = Column(String, ForeignKey("Companies.id"))
     product_name = Column(String, nullable=False)
     main_raw_materials = Column(String, nullable=False)
     product_standard = Column(ARRAY(String), nullable=False)
@@ -85,8 +85,8 @@ class Products(Base):
 class VectorDB(Base):
     __tablename__ = "VectorDB"
     id = Column(String, primary_key=True, index=True)
-    Product_id = Column(String, ForeignKey("Products.id"))
-    Company_id = Column(String, ForeignKey("Companies.id"))
+    product_id = Column(String, ForeignKey("Products.id"))
+    company_id = Column(String, ForeignKey("Companies.id"))
     embedding = Column(Vector(1536))
     metadata_json = Column(JSON)
     created_at = Column(String, nullable=False)
@@ -111,7 +111,6 @@ class SearchResult(Base):
     product = Column(String)
     completeness_score = Column(Integer, nullable=False)
     semantic_score = Column(Float, nullable=False)
-    doc_status = Column(String, nullable=False)
     total_score = Column(Integer, nullable=False)
     rank = Column(Integer,
                   nullable=False)  # Position in results (1, 2, 3, etc.)
