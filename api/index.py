@@ -22,5 +22,5 @@ async def health_check():
     }
 
 
-# Export the app for Vercel
-handler = app
+# # Export the app for Vercel
+# handler = app
