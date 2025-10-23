@@ -575,8 +575,5 @@ async def _upsert_vector(session: AsyncSession, company_id: str,
 # Include the router in the app
 app.include_router(router)
 
-
-# Create handler function for Vercel
-def handler(request):
-    """Vercel serverless function handler"""
-    return app(request.scope, request.receive, request.send)
+# Export the app for Vercel
+handler = app

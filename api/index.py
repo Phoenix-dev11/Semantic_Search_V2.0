@@ -22,7 +22,5 @@ async def health_check():
     }
 
 
-# Create handler function for Vercel
-def handler(request):
-    """Vercel serverless function handler"""
-    return app(request.scope, request.receive, request.send)
+# Export the app for Vercel
+handler = app

@@ -176,8 +176,5 @@ async def submit_feedback(feedback_request: FeedbackRequest):
 # Include the router in the app
 app.include_router(router)
 
-
-# Create handler function for Vercel
-def handler(request):
-    """Vercel serverless function handler"""
-    return app(request.scope, request.receive, request.send)
+# Export the app for Vercel
+handler = app
