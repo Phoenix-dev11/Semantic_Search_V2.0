@@ -18,8 +18,8 @@ import asyncio
 
 load_dotenv()
 
-# Create FastAPI app for Vercel
-app = FastAPI()
+# # Create FastAPI app for Vercel
+# app = FastAPI()
 
 # Create router for the upload functionality
 router = APIRouter()
@@ -572,8 +572,8 @@ async def _upsert_vector(session: AsyncSession, company_id: str,
         return vector, True
 
 
-# Include the router in the app
-app.include_router(router)
+# # Include the router in the app
+# app.include_router(router)
 
 # # Export the app for Vercel
 # handler = app

@@ -19,7 +19,7 @@ import json
 load_dotenv()
 
 # Create FastAPI app for Vercel
-app = FastAPI()
+# app = FastAPI()
 
 # Create router for the search functionality
 router = APIRouter()
@@ -764,7 +764,7 @@ async def search(request: SearchRequest):
 
 
 # Include the router in the app
-app.include_router(router)
+# app.include_router(router)
 
-# # Export the app for Vercel
+# Export the app for Vercel
 # handler = app
