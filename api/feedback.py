@@ -71,7 +71,7 @@ async def submit_feedback(feedback_request: FeedbackRequest):
     except Exception as e:
         return FeedbackResponse(status="failure",
                                 message=f"Failed to submit feedback: {str(e)}")
- 
+
 
 # @router.get("/feedback/query/{query_id}")
 # async def get_feedback_for_query(query_id: str):
