@@ -18,8 +18,8 @@ import asyncio
 
 load_dotenv()
 
-# # Create FastAPI app for Vercel
-# app = FastAPI()
+# Create FastAPI app for Vercel
+app = FastAPI()
 
 # Create router for the upload functionality
 router = APIRouter()
@@ -78,7 +78,13 @@ def calculate_score(row: pd.Series) -> float:
     return max(0.0, score)  # Ensure score doesn't go below 0
 
 
-@router.post("/upload")
+@router.get("/")
+async def upload_health():
+    """Health check for upload endpoint"""
+    return {"status": "healthy", "endpoint": "upload"}
+
+
+@router.post("/")
 async def upload_file(file: UploadFile = File(...)):
     """
     Upload Excel or CSV file containing company or product data.
@@ -572,8 +578,8 @@ async def _upsert_vector(session: AsyncSession, company_id: str,
         return vector, True
 
 
-# # Include the router in the app
-# app.include_router(router)
+# Include the router in the app
+app.include_router(router)
 
-# # Export the app for Vercel
-# handler = app
+# Export the app for Vercel
+handler = app
