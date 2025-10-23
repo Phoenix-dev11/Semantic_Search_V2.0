@@ -1,5 +1,5 @@
 import numpy as np
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, FastAPI
 from database.database import VectorDB, async_session, SearchQuery, Companies, Products
 from database.database import SearchResult as ORMSearchResult
 from database.schemas import SearchRequest, SearchResult as SearchResultSchema, Product, ProductSpecifications
@@ -18,6 +18,10 @@ import json
 
 load_dotenv()
 
+# Create FastAPI app for Vercel
+app = FastAPI()
+
+# Create router for the search functionality
 router = APIRouter()
 
 # Initialize OpenAI client
@@ -757,3 +761,13 @@ async def search(request: SearchRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+# Include the router in the app
+app.include_router(router)
+
+
+# Create handler function for Vercel
+def handler(request):
+    """Vercel serverless function handler"""
+    return app(request.scope, request.receive, request.send)
