@@ -575,5 +575,5 @@ async def _upsert_vector(session: AsyncSession, company_id: str,
 # Include the router in the app
 app.include_router(router)
 
-# Export the app for Vercel
-handler = app
+# # Export the app for Vercel
+# handler = app

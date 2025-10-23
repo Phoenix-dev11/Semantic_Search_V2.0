@@ -176,5 +176,5 @@ async def submit_feedback(feedback_request: FeedbackRequest):
 # Include the router in the app
 app.include_router(router)
 
-# Export the app for Vercel
-handler = app
+# # Export the app for Vercel
+# handler = app
