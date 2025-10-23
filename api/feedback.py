@@ -7,12 +7,19 @@ import uuid
 from datetime import datetime
 
 # Create FastAPI app for Vercel
-# app = FastAPI()
+app = FastAPI()
 
 # Create router for the feedback functionality
 router = APIRouter()
 
-@router.post("/feedback", response_model=FeedbackResponse)
+
+@router.get("/")
+async def feedback_health():
+    """Health check for feedback endpoint"""
+    return {"status": "healthy", "endpoint": "feedback"}
+
+
+@router.post("/", response_model=FeedbackResponse)
 async def submit_feedback(feedback_request: FeedbackRequest):
     """
     Submit feedback for a search result.
@@ -173,7 +180,7 @@ async def submit_feedback(feedback_request: FeedbackRequest):
 #                             detail=f"Failed to delete feedback: {str(e)}")
 
 # Include the router in the app
-# app.include_router(router)
+app.include_router(router)
 
 # Export the app for Vercel
-# handler = app
+handler = app
