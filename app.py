@@ -57,3 +57,6 @@ async def health_check():
         "service": "semantic_search_api",
         "version": "1.0.0"
     }
+
+
+handler = app
