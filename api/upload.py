@@ -1,7 +1,7 @@
 import pandas as pd
 import uuid
 import json
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, FastAPI
 from database.database import Companies, Products, VectorDB, async_session, get_session
 from database.schemas import CompanyRequest, ProductRequest, VectorDBRequest
 from sqlalchemy import select
@@ -18,6 +18,10 @@ import asyncio
 
 load_dotenv()
 
+# Create FastAPI app for Vercel
+app = FastAPI()
+
+# Create router for the upload functionality
 router = APIRouter()
 
 
@@ -566,3 +570,13 @@ async def _upsert_vector(session: AsyncSession, company_id: str,
         )
         session.add(vector)
         return vector, True
+
+
+# Include the router in the app
+app.include_router(router)
+
+
+# Create handler function for Vercel
+def handler(request):
+    """Vercel serverless function handler"""
+    return app(request.scope, request.receive, request.send)

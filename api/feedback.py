@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, FastAPI
 from database.database import Feedback, async_session
 from database.database import SearchResult as ORMSearchResult
 from sqlalchemy import select
@@ -6,6 +6,10 @@ from database.schemas import FeedbackRequest, FeedbackResponse
 import uuid
 from datetime import datetime
 
+# Create FastAPI app for Vercel
+app = FastAPI()
+
+# Create router for the feedback functionality
 router = APIRouter()
 
 
@@ -71,7 +75,7 @@ async def submit_feedback(feedback_request: FeedbackRequest):
     except Exception as e:
         return FeedbackResponse(status="failure",
                                 message=f"Failed to submit feedback: {str(e)}")
- 
+
 
 # @router.get("/feedback/query/{query_id}")
 # async def get_feedback_for_query(query_id: str):
@@ -168,3 +172,12 @@ async def submit_feedback(feedback_request: FeedbackRequest):
 #     except Exception as e:
 #         raise HTTPException(status_code=500,
 #                             detail=f"Failed to delete feedback: {str(e)}")
+
+# Include the router in the app
+app.include_router(router)
+
+
+# Create handler function for Vercel
+def handler(request):
+    """Vercel serverless function handler"""
+    return app(request.scope, request.receive, request.send)
