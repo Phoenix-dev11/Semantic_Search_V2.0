@@ -20,7 +20,7 @@ enable_docs = os.getenv("DISABLE_DOCS", "false").lower() != "true"
 app = FastAPI(
     title="Semantic Search API",
     description="AI-powered semantic search for company data",
-    version="1.0.0",
+    version="2.0.0",
     docs_url="/docs" if enable_docs else None,
     redoc_url="/redoc" if enable_docs else None,
 )
@@ -57,3 +57,4 @@ async def health_check():
         "service": "semantic_search_api",
         "version": "1.0.0"
     }
+

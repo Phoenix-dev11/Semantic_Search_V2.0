@@ -19,7 +19,7 @@ import json
 load_dotenv()
 
 # Create FastAPI app for Vercel
-app = FastAPI()
+# app = FastAPI()
 
 # Create router for the search functionality
 router = APIRouter()
@@ -546,13 +546,7 @@ def calculate_weighted_score(result: Dict[str, Any],
     return min(weighted_score, 1.0)
 
 
-@router.get("/")
-async def search_health():
-    """Health check for search endpoint"""
-    return {"status": "healthy", "endpoint": "search"}
-
-
-@router.post("/")
+@router.post("/search")
 async def search(request: SearchRequest):
     """
     Semantic search endpoint
@@ -770,7 +764,7 @@ async def search(request: SearchRequest):
 
 
 # Include the router in the app
-app.include_router(router)
+# app.include_router(router)
 
 # Export the app for Vercel
-handler = app
+# handler = app
