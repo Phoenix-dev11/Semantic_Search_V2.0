@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from database.database import Feedback, get_session
+from database.database import Feedback, async_session
 from database.database import SearchResult as ORMSearchResult
 from sqlalchemy import select
 from database.schemas import FeedbackRequest, FeedbackResponse
@@ -27,11 +27,12 @@ async def submit_feedback(feedback_request: FeedbackRequest):
                 status_code=400,
                 detail=f"Invalid action_type. Must be one of: {valid_actions}")
 
-        # Generate feedback ID and timestamp
+        # Generate feedback ID and timestamps
         feedback_id = str(uuid.uuid4())
-        timestamp = datetime.now().isoformat()
+        timestamp = datetime.utcnow().isoformat()
+        created_at = timestamp
 
-        async for session in get_session():
+        async with async_session() as session:
             try:
                 # Verify result_id exists and matches query_id
                 stmt = select(ORMSearchResult).where(
@@ -48,12 +49,13 @@ async def submit_feedback(feedback_request: FeedbackRequest):
                         status_code=400,
                         detail="result_id does not belong to query_id")
 
-                # Create feedback record
+                # Create feedback record (created_at required by DB schema)
                 feedback = Feedback(id=feedback_id,
                                     query_id=feedback_request.query_id,
                                     result_id=feedback_request.result_id,
                                     action_type=feedback_request.action_type,
-                                    timestamp=timestamp)
+                                    timestamp=timestamp,
+                                    created_at=created_at)
 
                 session.add(feedback)
                 await session.commit()
@@ -61,15 +63,11 @@ async def submit_feedback(feedback_request: FeedbackRequest):
                 return FeedbackResponse(
                     status="success",
                     message=
-                    f"Feedback submitted successfully for action: {feedback_request.action_type}",
-                    feedback_id=feedback_id)
+                    f"Feedback submitted successfully: {feedback_request.action_type}"
+                )
 
-            except Exception as e:
-                await session.rollback()
-                raise e
-
-    except HTTPException:
-        raise
+            except HTTPException:
+                raise
     except Exception as e:
         return FeedbackResponse(status="failure",
                                 message=f"Failed to submit feedback: {str(e)}")
