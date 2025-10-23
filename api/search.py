@@ -546,7 +546,13 @@ def calculate_weighted_score(result: Dict[str, Any],
     return min(weighted_score, 1.0)
 
 
-@router.post("/search")
+@router.get("/")
+async def search_health():
+    """Health check for search endpoint"""
+    return {"status": "healthy", "endpoint": "search"}
+
+
+@router.post("/")
 async def search(request: SearchRequest):
     """
     Semantic search endpoint
@@ -766,5 +772,5 @@ async def search(request: SearchRequest):
 # Include the router in the app
 app.include_router(router)
 
-# # Export the app for Vercel
-# handler = app
+# Export the app for Vercel
+handler = app

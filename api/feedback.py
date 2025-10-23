@@ -13,7 +13,13 @@ app = FastAPI()
 router = APIRouter()
 
 
-@router.post("/feedback", response_model=FeedbackResponse)
+@router.get("/")
+async def feedback_health():
+    """Health check for feedback endpoint"""
+    return {"status": "healthy", "endpoint": "feedback"}
+
+
+@router.post("/", response_model=FeedbackResponse)
 async def submit_feedback(feedback_request: FeedbackRequest):
     """
     Submit feedback for a search result.
@@ -176,5 +182,5 @@ async def submit_feedback(feedback_request: FeedbackRequest):
 # Include the router in the app
 app.include_router(router)
 
-# # Export the app for Vercel
-# handler = app
+# Export the app for Vercel
+handler = app
