@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Query, FastAPI
 from database.database import VectorDB, async_session, SearchQuery, Companies, Products
 from database.database import SearchResult as ORMSearchResult
 from database.schemas import SearchRequest, SearchResult as SearchResultSchema, Product, ProductSpecifications
-from sqlalchemy import select, or_, and_
+from sqlalchemy import select, or_, and_, func
 from typing import List, Dict, Any, Optional
 from openai import OpenAI
 import os
@@ -48,9 +48,8 @@ def is_all_industries_query(query_text: str) -> bool:
     """
     all_industries_keywords = [
         "without industry", "all industries", "any industry",
-        "no industry filter", "across industries", "all sectors", "any sector",
-        "no sector", "every industry", "all companies", "any company",
-        "all products", "any product", "不限行业", "所有行业", "任何行业", "跨行业", "全行业"
+        "no industry filter", "across industries", "不限行业", "所有行业", "任何行业",
+        "跨行业", "全行业"
     ]
 
     query_lower = query_text.lower()
@@ -84,16 +83,7 @@ def is_ranking_query(query_text: str) -> tuple[bool, str, str]:
                  for keyword in ["smallest", "lowest", "least", "最小", "最低"]):
             return True, "capital_amount", "asc"
 
-    # Check for delivery time ranking (shortest = asc, fastest = asc)
-    if any(
-            keyword in query_lower for keyword in
-        ["delivery", "lead time", "delivery time", "交期", "交货", "交货期", "交货时间"]):
-        if any(keyword in query_lower for keyword in
-               ["fastest", "shortest", "minimum", "min", "最短", "最快", "最低"]):
-            return True, "delivery_time", "asc"
-        elif any(keyword in query_lower for keyword in
-                 ["slowest", "longest", "maximum", "max", "最长", "最慢", "最高"]):
-            return True, "delivery_time", "desc"
+    # Note: delivery time ranking removed as delivery_time field doesn't exist in current schema
 
     return False, "", ""
 
@@ -101,8 +91,8 @@ def is_ranking_query(query_text: str) -> tuple[bool, str, str]:
 async def analyze_query(query_text: str) -> Dict[str, Any]:
     """
     Analyze natural language query using OpenAI to extract:
-    - location: str | null (if mentioned in query)
-    - weight: {certification: float, technology: float, delivery: float}
+    - country: str | null (if mentioned in query)
+    - weight: {certification: float, technology: float, standard: float}
     - query_text: short version for embedding
     - is_list_query: boolean indicating if this is a list query
     """
@@ -118,109 +108,131 @@ async def analyze_query(query_text: str) -> Dict[str, Any]:
         f"      📊 Is ranking query: {is_ranking} (field: {ranking_field}, order: {ranking_order})"
     )
 
-    if is_list:
-        # For list queries, extract location and return simple weights
-        location_keywords = {
-            "us": "US",
-            "usa": "US",
-            "america": "US",
-            "united states": "US",
-            "china": "CN",
-            "chinese": "CN",
-            "taiwan": "TW",
-            "taipei": "TW",
-            "japan": "JP",
-            "japanese": "JP",
-            "korea": "KR",
-            "south korea": "KR",
-            "korean": "KR",
-            "germany": "DE",
-            "german": "DE",
-            "france": "FR",
-            "french": "FR",
-            "uk": "GB",
-            "britain": "GB",
-            "british": "GB",
-            "united kingdom": "GB",
-            "canada": "CA",
-            "canadian": "CA",
-            "australia": "AU",
-            "australian": "AU",
-            "india": "IN",
-            "indian": "IN",
-            "美国": "US",
-            "中国": "CN",
-            "台湾": "TW",
-            "日本": "JP",
-            "韩国": "KR",
-            "德国": "DE",
-            "法国": "FR",
-            "英国": "GB",
-            "加拿大": "CA",
-            "澳大利亚": "AU",
-            "印度": "IN"
-        }
+    # if is_list:
+    #     # For list queries, extract country and return simple weights
+    #     country_keywords = {
+    #         "us": "US",
+    #         "usa": "US",
+    #         "america": "US",
+    #         "united states": "US",
+    #         "china": "CN",
+    #         "chinese": "CN",
+    #         "taiwan": "TW",
+    #         "taipei": "TW",
+    #         "japan": "JP",
+    #         "japanese": "JP",
+    #         "korea": "KR",
+    #         "south korea": "KR",
+    #         "korean": "KR",
+    #         "germany": "DE",
+    #         "german": "DE",
+    #         "france": "FR",
+    #         "french": "FR",
+    #         "uk": "GB",
+    #         "britain": "GB",
+    #         "british": "GB",
+    #         "united kingdom": "GB",
+    #         "canada": "CA",
+    #         "canadian": "CA",
+    #         "australia": "AU",
+    #         "australian": "AU",
+    #         "india": "IN",
+    #         "indian": "IN",
+    #         "美国": "US",
+    #         "中国": "CN",
+    #         "台湾": "TW",
+    #         "日本": "JP",
+    #         "韩国": "KR",
+    #         "德国": "DE",
+    #         "法国": "FR",
+    #         "英国": "GB",
+    #         "加拿大": "CA",
+    #         "澳大利亚": "AU",
+    #         "印度": "IN"
+    #     }
 
-        query_lower = query_text.lower()
-        location = None
-        for keyword, country in location_keywords.items():
-            if keyword in query_lower:
-                location = country
-                break
+    #     query_lower = query_text.lower()
+    #     country = None
+    #     for keyword, country in country_keywords.items():
+    #         if keyword in query_lower:
+    #             country = country
+    #             break
 
-        return {
-            "location": location,
-            "weight": {
-                "certification": 0.33,
-                "technology": 0.33,
-                "delivery": 0.34
-            },
-            "query_text": query_text,
-            "is_list_query": True,
-            "is_all_industries": is_all_industries,
-            "is_ranking": is_ranking,
-            "ranking_field": ranking_field,
-            "ranking_order": ranking_order
-        }
+    #     return {
+    #         "country": country,
+    #         "weight": {
+    #             "standard": 0.33,
+    #             "certification": 0.34,
+    #             "technology": 0.33,
+    #         },
+    #         "query_text": query_text,
+    #         "is_list_query": True,
+    #         "is_all_industries": is_all_industries,
+    #         "is_ranking": is_ranking,
+    #         "ranking_field": ranking_field,
+    #         "ranking_order": ranking_order
+    #     }
 
     # For semantic queries, use OpenAI analysis
     prompt = f"""
-    Analyze this search query and extract structured information:
+    Analyze the following search query and extract structured semantic information.
+
     Query: "{query_text}"
-    
-    Rules:
-    1. Extract location if mentioned, convert to ISO country code (e.g., "United States" -> "US", "China" -> "CN", "Taiwan" -> "TW")
-    2. If no location mentioned, set to null
-    3. Determine weights for certification, technology, and delivery based on query meaning
-    4. If certifications mentioned with "without" or "no", set certification weight to 0
-    5. All weights must be non-negative and sum to 1.0
-    6. Create a short query_text (5-15 words) for embedding generation
-    7. Check if query wants to search across all industries (keywords: "any industry", "all industries", "any company", etc.)
-    
-    Common ISO country codes:
-    - United States, US, USA, America -> "US"
-    - China, Chinese -> "CN" 
-    - Taiwan, Taipei -> "TW"
-    - Japan, Japanese -> "JP"
-    - South Korea, Korea, Korean -> "KR"
-    - Germany, German -> "DE"
-    - France, French -> "FR"
-    - United Kingdom, UK, Britain, British -> "GB"
-    - Canada, Canadian -> "CA"
-    - Australia, Australian -> "AU"
-    - India, Indian -> "IN"
-    
-    Respond ONLY with valid JSON in this exact format:
+
+    Follow these exact rules:
+
+    1. **Country Extraction**
+    • Identify a country mentioned in the query and convert it to its ISO 2-letter country code.
+    • If no country is mentioned, set "country" to null.
+    • Use the following mappings:
+        - United States, US, USA, America -> "US"
+        - China, Chinese -> "CN"
+        - Taiwan, Taipei -> "TW"
+        - Japan, Japanese -> "JP"
+        - South Korea, Korea, Korean -> "KR"
+        - Germany, German -> "DE"
+        - France, French -> "FR"
+        - United Kingdom, UK, Britain, British -> "GB"
+        - Canada, Canadian -> "CA"
+        - Australia, Australian -> "AU"
+        - India, Indian -> "IN"
+
+    2. **Weights**
+    • Assign weights for three aspects: "certification", "technology", and "standard".
+    • These represent the relative importance or focus of each concept in the query.
+    • If the query includes phrases like "without certification", "no certification", or "uncertified", set the certification weight to 0.
+    • If none of the three concepts are mentioned or implied, use balanced defaults:
+        certification = 0.33  
+        technology = 0.33  
+        standard = 0.34
+    • All weights must be non-negative floats and must sum exactly to 1.0.
+    3. **Short Query Text**
+    • Create a concise, meaningful query_text (5–15 words) summarizing the intent of the query.
+    • This text will be used for embedding generation.
+
+    4. **List Query**
+    • Set "is_list_query" to true if the query explicitly refers to plural or list-type searches 
+        (e.g., "list of companies", "manufacturers in Germany", "suppliers", "distributors").
+    • Otherwise, set it to false.
+
+    5. **Industry Scope**
+    • Set "is_all_industries" to true **only if the query explicitly mentions or implies coverage across all industries** 
+        (e.g., "all industries", "cross-industry", "no specific industry", "industry-agnostic","without industry", "all industry", "any industry", "no industry filter", "across industries").
+    • Queries like "all companies", "all suppliers", or "all manufacturers" do **NOT** imply all industries — they should be false.
+    • Default is false.
+
+    Respond ONLY with valid JSON in this exact format (no explanations or extra text):
+
     {{
-        "location": "ISO_CODE or null",
+        "country": "ISO_CODE or null",
         "weight": {{
-            "certification": 0.0-1.0,
-            "technology": 0.0-1.0,
-            "delivery": 0.0-1.0
+            "certification": 0.0,
+            "technology": 0.0,
+            "standard": 0.0
         }},
         "query_text": "short meaningful text",
-        "is_list_query": false,
-        "is_all_industries": true/false
+        "is_list_query": true,
+        "is_all_industries": false
     }}
     """
 
@@ -246,21 +258,21 @@ async def analyze_query(query_text: str) -> Dict[str, Any]:
         weights = parsed.get("weight", {})
         cert_w = max(0, min(1, weights.get("certification", 0.33)))
         tech_w = max(0, min(1, weights.get("technology", 0.33)))
-        del_w = max(0, min(1, weights.get("delivery", 0.34)))
+        standard_w = max(0, min(1, weights.get("standard", 0.34)))
 
         # Normalize to sum to 1.0
-        total = cert_w + tech_w + del_w
+        total = cert_w + tech_w + standard_w
         if total > 0:
             cert_w /= total
             tech_w /= total
-            del_w /= total
+            standard_w /= total
         else:
-            cert_w = tech_w = del_w = 1 / 3
+            cert_w = tech_w = standard_w = 1 / 3
 
         parsed["weight"] = {
             "certification": round(cert_w, 3),
             "technology": round(tech_w, 3),
-            "delivery": round(del_w, 3)
+            "standard": round(standard_w, 3)
         }
 
         # Ensure is_all_industries is included
@@ -276,11 +288,11 @@ async def analyze_query(query_text: str) -> Dict[str, Any]:
         # Fallback analysis
         is_ranking, ranking_field, ranking_order = is_ranking_query(query_text)
         return {
-            "location": None,
+            "country": None,
             "weight": {
                 "certification": 0.33,
                 "technology": 0.33,
-                "delivery": 0.34
+                "standard": 0.34
             },
             "query_text": query_text[:50],  # Truncate if too long
             "is_list_query": is_list_query(query_text),
@@ -296,13 +308,20 @@ async def get_available_industries() -> List[str]:
     async with async_session() as session:
         result = await session.execute(
             select(Companies.industry_category).distinct())
-        return [row[0] for row in result.fetchall() if row[0]]
+        industries = []
+        for row in result.fetchall():
+            if row[0]:  # If industry_category is not None
+                if isinstance(row[0], list):
+                    industries.extend(row[0])  # Flatten arrays
+                else:
+                    industries.append(row[0])
+        return list(set(industries))  # Remove duplicates
 
 
 async def list_companies_and_products(
         industry_category: Optional[str],
-        location: Optional[str],
-        top_k: int = 50,
+        country: Optional[str],
+        top_k: Optional[int] = 50,
         ranking_field: Optional[str] = None,
         ranking_order: str = "desc") -> List[Dict[str, Any]]:
     """
@@ -311,28 +330,31 @@ async def list_companies_and_products(
     """
     print(f"      📋 Listing companies and products...")
     print(f"         Industry: {industry_category}")
-    print(f"         Location: {location}")
-    print(f"         Limit: {top_k}")
+    print(f"         Country: {country}")
+    print(
+        f"         Limit: {top_k if top_k is not None else 'No limit (all results)'}"
+    )
 
     async with async_session() as session:
         # Build query to get companies with their products
         query = select(
             Companies.id, Companies.name, Companies.industry_category,
-            Companies.location, Companies.capital_amount, Companies.revenue,
-            Companies.company_certification_documents,
-            Companies.patent, Companies.delivery_time,
+            Companies.country, Companies.capital_amount, Companies.revenue,
+            Companies.company_certification_documents, Companies.patent_count,
             Products.id.label("product_id"), Products.product_name,
-            Products.main_raw_materials, Products.technical_advantages,
-            Products.product_certifications).select_from(
+            Products.main_raw_materials, Products.product_standard,
+            Products.technical_advantages).select_from(
                 Companies.__table__.join(Products.__table__,
                                          Companies.id == Products.company_id))
 
         # Add filters
         filters = []
         if industry_category:
-            filters.append(Companies.industry_category == industry_category)
-        if location:
-            filters.append(Companies.location == location)
+            # Use PostgreSQL array contains operator for industry_category (ARRAY field)
+            filters.append(
+                Companies.industry_category.op('@>')([industry_category]))
+        if country:
+            filters.append(Companies.country == country)
 
         if filters:
             query = query.where(and_(*filters))
@@ -349,19 +371,32 @@ async def list_companies_and_products(
                     query = query.order_by(Companies.capital_amount.desc())
                 else:
                     query = query.order_by(Companies.capital_amount.asc())
-            elif ranking_field == "delivery_time":
-                if ranking_order == "asc":
-                    query = query.order_by(Companies.delivery_time.asc())
-                else:
-                    query = query.order_by(Companies.delivery_time.desc())
+            # Note: delivery_time field removed as it doesn't exist in current schema
 
-        query = query.limit(top_k)
+        # Only apply limit if top_k is specified
+        if top_k is not None:
+            query = query.limit(top_k)
 
         # Execute query
         print(f"      📊 Executing list query...")
+        print(f"      🔍 SQL Query: {query}")
         result = await session.execute(query)
         rows = result.fetchall()
         print(f"      ✅ Found {len(rows)} companies with products")
+
+        # Debug: Show what was found
+        if len(rows) == 0 and industry_category:
+            print(
+                f"      🔍 DEBUG: No results found for industry '{industry_category}'"
+            )
+            # Check if any companies have this industry
+            debug_result = await session.execute(
+                select(Companies.name, Companies.industry_category))
+            debug_companies = debug_result.fetchall()
+            print(f"      🔍 DEBUG: All companies in database:")
+            for company in debug_companies:
+                print(
+                    f"         - {company.name}: {company.industry_category}")
 
         # Group by company
         companies_dict = {}
@@ -369,15 +404,14 @@ async def list_companies_and_products(
             company_id = row.id
             if company_id not in companies_dict:
                 companies_dict[company_id] = {
-                    "Company_Name": row.name,
-                    "Industry_category": row.industry_category,
-                    "Location": row.location,
+                    "company_name": row.name,
+                    "industry_category": row.industry_category,
+                    "country": row.country,
                     "capital_amount": row.capital_amount,
-                    "Revenue": row.revenue,
-                    "Company_certification_documents":
+                    "revenue": row.revenue,
+                    "company_certification_documents":
                     row.company_certification_documents,
-                    "Patent": row.patent,
-                    "Delivery_time": str(row.delivery_time),
+                    "patent_count": row.patent_count,
                     "products": []
                 }
 
@@ -391,23 +425,23 @@ async def list_companies_and_products(
                 }
 
                 companies_dict[company_id]["products"].append({
-                    "Product_Name":
+                    "product_name":
                     row.product_name,
-                    "Main_Raw_Materials":
+                    "main_raw_materials":
                     row.main_raw_materials,
-                    "Product_Specifications":
+                    "product_specifications":
                     product_specs,
-                    "Technical_Advantages":
+                    "technical_advantages":
                     row.technical_advantages,
-                    "Product_Certification_Materials":
-                    str(row.product_certifications)
+                    "product_standard":
+                    row.product_standard
                 })
 
         # Convert to list and sort by company name
         companies_list = list(companies_dict.values())
         # Preserve DB order when ranking is applied; otherwise sort by name for stable UX
         if not ranking_field:
-            companies_list.sort(key=lambda x: x["Company_Name"])
+            companies_list.sort(key=lambda x: x["company_name"])
 
         print(f"      🎯 Returning {len(companies_list)} companies")
         return companies_list
@@ -441,22 +475,22 @@ def cosine_similarity(a: List[float], b: List[float]) -> float:
 
 async def vector_search(query_embedding: List[float],
                         industry_category: Optional[str],
-                        location: Optional[str],
+                        country: Optional[str],
                         top_k: int = 10) -> List[Dict[str, Any]]:
-    """Perform vector search with industry and location filtering"""
+    """Perform vector search with industry and country filtering"""
     print(
-        f"      🔍 Searching with industry='{industry_category}', location='{location}', top_k={top_k}"
+        f"      🔍 Searching with industry='{industry_category}', country='{country}', top_k={top_k}"
     )
     async with async_session() as session:
         # Build base query with joins
         query = select(VectorDB.id, VectorDB.embedding, VectorDB.metadata_json,
                        Companies.name.label("company_name"),
-                       Companies.industry_category, Companies.location,
+                       Companies.industry_category, Companies.country,
                        Companies.capital_amount, Companies.revenue,
                        Companies.company_certification_documents,
-                       Companies.patent, Companies.delivery_time,
-                       Products.product_name, Products.technical_advantages,
-                       Products.product_certifications,
+                       Companies.patent_count, Products.product_name,
+                       Products.technical_advantages,
+                       Products.product_standard,
                        Products.main_raw_materials).select_from(
                            VectorDB.__table__.join(
                                Companies.__table__,
@@ -467,9 +501,11 @@ async def vector_search(query_embedding: List[float],
         # Add filters
         filters = []
         if industry_category:
-            filters.append(Companies.industry_category == industry_category)
-        if location:
-            filters.append(Companies.location == location)
+            # Use PostgreSQL array contains operator for industry_category (ARRAY field)
+            filters.append(
+                Companies.industry_category.op('@>')([industry_category]))
+        if country:
+            filters.append(Companies.country == country)
 
         if filters:
             query = query.where(and_(*filters))
@@ -491,16 +527,15 @@ async def vector_search(query_embedding: List[float],
                 "vector_id": row.id,
                 "company_name": row.company_name,
                 "industry_category": row.industry_category,
-                "location": row.location,
+                "country": row.country,
                 "capital_amount": row.capital_amount,
                 "revenue": row.revenue,
                 "company_certification_documents":
                 row.company_certification_documents,
-                "patent": row.patent,
-                "delivery_time": row.delivery_time,
+                "patent_count": row.patent_count,
                 "product_name": row.product_name,
                 "technical_advantages": row.technical_advantages,
-                "product_certifications": row.product_certifications,
+                "product_standard": row.product_standard,
                 "main_raw_materials": row.main_raw_materials,
                 "metadata": row.metadata_json,
                 "similarity": similarity
@@ -528,10 +563,8 @@ def calculate_weighted_score(result: Dict[str, Any],
     tech_adv = metadata.get("technical_advantages", "")
     tech_score = min(len(tech_adv) / 200.0, 1.0)  # Normalize to 0-1
 
-    # Delivery score (based on delivery_time - lower is better)
-    delivery_time = metadata.get("delivery_time", 30)
-    delivery_score = max(
-        0, 1 - (delivery_time - 1) / 30.0)  # 1 day = 1.0, 31 days = 0.0
+    # Delivery score (default to 0.5 since delivery_time field not available)
+    standard_score = 0.5  # Neutral score since field not available standard
 
     # Data completeness score
     data_score = metadata.get("data_score", 0.5)
@@ -540,10 +573,36 @@ def calculate_weighted_score(result: Dict[str, Any],
     weighted_score = (
         base_score * 0.4 +  # 40% similarity
         cert_score * weights["certification"] * 0.2 +
-        tech_score * weights["technology"] * 0.2 + delivery_score *
-        weights["delivery"] * 0.2) * data_score  # Multiply by data quality
+        tech_score * weights["technology"] * 0.2 + standard_score *
+        weights["standard"] * 0.2) * data_score  # Multiply by data quality
 
     return min(weighted_score, 1.0)
+
+
+@router.get("/debug/industries")
+async def debug_industries():
+    """Debug endpoint to check what industries are stored in the database"""
+    async with async_session() as session:
+        # Get all companies with their industry categories
+        result = await session.execute(
+            select(Companies.name, Companies.industry_category))
+        companies = result.fetchall()
+
+        # Get all unique industries
+        all_industries = await get_available_industries()
+
+        return {
+            "total_companies":
+            len(companies),
+            "all_industries":
+            sorted(all_industries),
+            "companies_with_industries": [{
+                "name":
+                company.name,
+                "industries":
+                company.industry_category
+            } for company in companies]
+        }
 
 
 @router.post("/search")
@@ -556,10 +615,12 @@ async def search(request: SearchRequest):
     print(f"   Top K: {request.top_k}")
 
     try:
-        # Step 1: Analyze query for location and weights only
+        # Step 1: Analyze query for country and weights only
         print("\n🧠 Step 1: Analyzing query...")
+        print(f"   Query text: {request.query_text}")
         analysis = await analyze_query(request.query_text)
-        location = analysis["location"]
+        print(f"   Analysis: {analysis}")
+        country = analysis["country"]
         weights = analysis["weight"]
         query_text = analysis["query_text"]
         is_list_query = analysis.get("is_list_query", False)
@@ -568,7 +629,7 @@ async def search(request: SearchRequest):
         ranking_field = analysis.get("ranking_field", "")
         ranking_order = analysis.get("ranking_order", "desc")
         print(f"   ✅ Analysis result:")
-        print(f"      Location: {location}")
+        print(f"      Location: {country}")
         print(f"      Weights: {weights}")
         print(f"      Query text: {query_text}")
         print(f"      Is list query: {is_list_query}")
@@ -587,11 +648,22 @@ async def search(request: SearchRequest):
             matched_industry_category = request.industry_category
             print(f"   ✅ Using industry: {matched_industry_category}")
 
+            # Debug: Check if the requested industry exists
+            if matched_industry_category and matched_industry_category not in available_industries:
+                print(
+                    f"   ⚠️ WARNING: Requested industry '{matched_industry_category}' not found in available industries!"
+                )
+                print(
+                    f"   🔍 Similar industries: {[ind for ind in available_industries if matched_industry_category.lower() in ind.lower() or ind.lower() in matched_industry_category.lower()]}"
+                )
+
         # Check if this is a list query
         if is_list_query or is_ranking:
             print("\n📋 Step 3: Processing list query (no semantic search)...")
+            # For list queries, don't apply top_k limit - show all results
+            top_k_for_list = None if is_list_query else request.top_k
             companies_list = await list_companies_and_products(
-                matched_industry_category, location, request.top_k,
+                matched_industry_category, country, top_k_for_list,
                 ranking_field if is_ranking else None,
                 ranking_order if is_ranking else "desc")
 
@@ -600,36 +672,25 @@ async def search(request: SearchRequest):
             vector_results = []  # Empty for list queries
             for i, company in enumerate(companies_list):
                 for j, product in enumerate(company["products"]):
-                    # Create product specifications
-                    product_specs = ProductSpecifications(
-                        Dimensions=product["Product_Specifications"]
-                        ["Dimensions"],
-                        Prediction=product["Product_Specifications"]
-                        ["Prediction"],
-                        Materials=product["Product_Specifications"]
-                        ["Materials"])
-
-                    # Create product object
+                    # Create product object (matching updated schema)
                     product_obj = Product(
-                        Product_Name=product["Product_Name"],
-                        Main_Raw_Materials=product["Main_Raw_Materials"],
-                        Product_Specifications=product_specs,
-                        Technical_Advantages=product["Technical_Advantages"],
-                        Product_Certification_Materials=product[
-                            "Product_Certification_Materials"])
+                        product_name=product["product_name"],
+                        main_raw_materials=product["main_raw_materials"],
+                        product_standard=product["product_standard"],
+                        technical_advantages=product["technical_advantages"])
 
                     # Create search result with new format
                     search_result = SearchResultSchema(
-                        Company_Name=company["Company_Name"],
-                        Industry_category=company["Industry_category"],
-                        Location=company["Location"],
+                        company_name=company["company_name"],
+                        industry_category=company["industry_category"],
+                        country=company["country"],
                         capital_amount=company["capital_amount"],
-                        Revenue=company["Revenue"],
-                        Company_certification_documents=company[
-                            "Company_certification_documents"],
-                        Product=product_obj,
-                        Patent=company["Patent"],
-                        Delivery_time=company["Delivery_time"],
+                        revenue=company["revenue"],
+                        company_certification_documents=company[
+                            "company_certification_documents"],
+                        product=product_obj,
+                        patent_count=company[
+                            "patent_count"],  # Use integer directly
                         completeness_score=100,  # List queries show all data
                         semantic_score=
                         1.0,  # No semantic scoring for list queries
@@ -649,7 +710,7 @@ async def search(request: SearchRequest):
             print("\n🔍 Step 4: Performing vector search...")
             vector_results = await vector_search(query_embedding,
                                                  matched_industry_category,
-                                                 location, request.top_k)
+                                                 country, request.top_k)
             print(f"   ✅ Found {len(vector_results)} vector results")
 
             # Step 5: Calculate weighted scores and rank
@@ -664,35 +725,26 @@ async def search(request: SearchRequest):
                     f"      Similarity: {result['similarity']:.3f}, Weighted score: {weighted_score:.3f}"
                 )
 
-                # Create product specifications for semantic search results
-                product_specs = ProductSpecifications(
-                    Dimensions=
-                    "Standard",  # Default since not in vector metadata
-                    Prediction=0.85,  # Default prediction score
-                    Materials=result.get("main_raw_materials", ""))
-
-                # Create product object
+                # Create product object (matching updated schema)
                 product_obj = Product(
-                    Product_Name=result["product_name"],
-                    Main_Raw_Materials=result.get("main_raw_materials", ""),
-                    Product_Specifications=product_specs,
-                    Technical_Advantages=result.get("technical_advantages",
-                                                    ""),
-                    Product_Certification_Materials=str(
-                        result.get("product_certifications", [])))
+                    product_name=result["product_name"],
+                    main_raw_materials=result.get("main_raw_materials", []),
+                    product_standard=result.get("product_standard", []),
+                    technical_advantages=result.get("technical_advantages",
+                                                    []))
 
                 # Create search result with new format
                 search_result = SearchResultSchema(
-                    Company_Name=result["company_name"],
-                    Industry_category=result["industry_category"],
-                    Location=result["location"],
+                    company_name=result["company_name"],
+                    industry_category=result["industry_category"],
+                    country=result["country"],
                     capital_amount=result.get("capital_amount", 0),
-                    Revenue=result.get("revenue", 0),
-                    Company_certification_documents=result.get(
-                        "company_certification_documents", ""),
-                    Product=product_obj,
-                    Patent=result.get("patent", False),
-                    Delivery_time=str(result.get("delivery_time", 30)),
+                    revenue=result.get("revenue", 0),
+                    company_certification_documents=result.get(
+                        "company_certification_documents", []),
+                    product=product_obj,
+                    patent_count=result.get("patent_count",
+                                            0),  # Use integer directly
                     completeness_score=int(
                         result["metadata"].get("data_score", 0.5) * 100),
                     semantic_score=round(weighted_score, 3),
@@ -717,7 +769,7 @@ async def search(request: SearchRequest):
                                        filters=json.dumps({
                                            "industry_category":
                                            matched_industry_category,
-                                           "location": location
+                                           "country": country
                                        }),
                                        top_k=request.top_k,
                                        created_at=now)
@@ -729,15 +781,15 @@ async def search(request: SearchRequest):
                 # Find corresponding vector result
                 vector_result = next(
                     (vr for vr in vector_results
-                     if vr["company_name"] == result.Company_Name), None)
+                     if vr["company_name"] == result.company_name), None)
                 vector_id = vector_result[
                     "vector_id"] if vector_result else None
 
                 search_result = ORMSearchResult(
                     id=str(uuid.uuid4()),
                     query_id=query_id,
-                    company=result.Company_Name,
-                    product=result.Product.Product_Name,
+                    company=result.company_name,
+                    product=result.product.product_name,
                     completeness_score=result.completeness_score,
                     semantic_score=result.semantic_score,
                     total_score=result.total_score,

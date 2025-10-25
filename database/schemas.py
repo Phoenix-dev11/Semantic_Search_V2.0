@@ -6,23 +6,21 @@ from typing import Optional, List, Union
 #Companies
 class CompanyRequest(BaseModel):
     name: str
-    industry_category: str
-    location: str
-    capital_amount: int
-    revenue: int
-    company_certification_documents: str
-    patent: bool
-    delivery_time: int
+    industry_category: List[str]
+    country: str
+    capital_amount: float
+    revenue: float
+    company_certification_documents: List[str]
+    patent_count: int
 
 
 #Products
 class ProductRequest(BaseModel):
     company_id: str
     product_name: str
-    main_raw_materials: str
-    product_standard: str
-    technical_advantages: str
-    product_certifications: List[str]
+    main_raw_materials: List[str]
+    product_standard: List[str]
+    technical_advantages: List[str]
 
 
 #VectorDB
@@ -54,23 +52,21 @@ class ProductSpecifications(BaseModel):
 
 
 class Product(BaseModel):
-    Product_Name: str
-    Main_Raw_Materials: str
-    Product_Specifications: ProductSpecifications
-    Technical_Advantages: str
-    Product_Certification_Materials: str
+    product_name: str
+    main_raw_materials: List[str]
+    product_standard: List[str]
+    technical_advantages: List[str]
 
 
 class SearchResult(BaseModel):
-    Company_Name: str
-    Industry_category: str
-    Location: str
-    capital_amount: int
-    Revenue: int
-    Company_certification_documents: str
-    Product: Product
-    Patent: bool
-    Delivery_time: str
+    company_name: str
+    industry_category: List[str]
+    country: str
+    capital_amount: float
+    revenue: float
+    company_certification_documents: List[str]
+    product: Product
+    patent_count: int
     completeness_score: int
     semantic_score: float
     total_score: int
