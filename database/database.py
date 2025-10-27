@@ -84,7 +84,7 @@ class VectorDB(Base):
     __tablename__ = "VectorDB"
     id = Column(String, primary_key=True, index=True)
     product_id = Column(String, ForeignKey("Products.id"),
-                        nullable=True)  # Can be null for industry-only vectors
+                        nullable=False)  # One vector per product
     company_id = Column(String, ForeignKey("Companies.id"))
     industry_category = Column(String,
                                nullable=False)  # Single industry per vector

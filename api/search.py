@@ -56,6 +56,66 @@ def is_all_industries_query(query_text: str) -> bool:
     return any(keyword in query_lower for keyword in all_industries_keywords)
 
 
+def is_physical_spec_query(query_text: str) -> bool:
+    """
+    Check if the query is asking for physical specifications
+    (size, weight, dimensions, precision, etc.)
+    """
+    physical_keywords = [
+        # English terms
+        "size",
+        "weight",
+        "dimension",
+        "specification",
+        "spec",
+        "tolerance",
+        "precision",
+        "accuracy",
+        "measurement",
+        "physical",
+        "dimensions",
+        "length",
+        "width",
+        "height",
+        "diameter",
+        "thickness",
+        "capacity",
+        "volume",
+        "density",
+        "viscosity",
+        "temperature",
+        "pressure",
+
+        # Chinese terms
+        "尺寸",
+        "重量",
+        "規格",
+        "精度",
+        "公差",
+        "測量",
+        "物理",
+        "長度",
+        "寬度",
+        "高度",
+        "直徑",
+        "厚度",
+        "容量",
+        "體積",
+        "密度",
+        "黏度",
+        "溫度",
+        "壓力",
+        "大小",
+        "規格",
+        "標準",
+        "誤差",
+        "精確度"
+    ]
+
+    query_lower = query_text.lower()
+    return any(keyword in query_lower for keyword in physical_keywords)
+
+
 def is_ranking_query(query_text: str) -> tuple[bool, str, str]:
     """
     Check if the query is asking for ranking by revenue or capital
@@ -95,6 +155,7 @@ async def analyze_query(query_text: str) -> Dict[str, Any]:
     - weight: {certification: float, technology: float, standard: float}
     - query_text: short version for embedding
     - is_list_query: boolean indicating if this is a list query
+    - product_name: str | null (if mentioned in query)
     """
     print(f"      🤖 Calling OpenAI with query: '{query_text}'")
 
@@ -102,76 +163,13 @@ async def analyze_query(query_text: str) -> Dict[str, Any]:
     is_list = is_list_query(query_text)
     is_all_industries = is_all_industries_query(query_text)
     is_ranking, ranking_field, ranking_order = is_ranking_query(query_text)
+    is_physical_spec = is_physical_spec_query(query_text)
     print(f"      📋 Is list query: {is_list}")
     print(f"      🌐 Is all industries query: {is_all_industries}")
+    print(f"      📏 Is physical spec query: {is_physical_spec}")
     print(
         f"      📊 Is ranking query: {is_ranking} (field: {ranking_field}, order: {ranking_order})"
     )
-
-    # if is_list:
-    #     # For list queries, extract country and return simple weights
-    #     country_keywords = {
-    #         "us": "US",
-    #         "usa": "US",
-    #         "america": "US",
-    #         "united states": "US",
-    #         "china": "CN",
-    #         "chinese": "CN",
-    #         "taiwan": "TW",
-    #         "taipei": "TW",
-    #         "japan": "JP",
-    #         "japanese": "JP",
-    #         "korea": "KR",
-    #         "south korea": "KR",
-    #         "korean": "KR",
-    #         "germany": "DE",
-    #         "german": "DE",
-    #         "france": "FR",
-    #         "french": "FR",
-    #         "uk": "GB",
-    #         "britain": "GB",
-    #         "british": "GB",
-    #         "united kingdom": "GB",
-    #         "canada": "CA",
-    #         "canadian": "CA",
-    #         "australia": "AU",
-    #         "australian": "AU",
-    #         "india": "IN",
-    #         "indian": "IN",
-    #         "美国": "US",
-    #         "中国": "CN",
-    #         "台湾": "TW",
-    #         "日本": "JP",
-    #         "韩国": "KR",
-    #         "德国": "DE",
-    #         "法国": "FR",
-    #         "英国": "GB",
-    #         "加拿大": "CA",
-    #         "澳大利亚": "AU",
-    #         "印度": "IN"
-    #     }
-
-    #     query_lower = query_text.lower()
-    #     country = None
-    #     for keyword, country in country_keywords.items():
-    #         if keyword in query_lower:
-    #             country = country
-    #             break
-
-    #     return {
-    #         "country": country,
-    #         "weight": {
-    #             "standard": 0.33,
-    #             "certification": 0.34,
-    #             "technology": 0.33,
-    #         },
-    #         "query_text": query_text,
-    #         "is_list_query": True,
-    #         "is_all_industries": is_all_industries,
-    #         "is_ranking": is_ranking,
-    #         "ranking_field": ranking_field,
-    #         "ranking_order": ranking_order
-    #     }
 
     # For semantic queries, use OpenAI analysis
     prompt = f"""
@@ -200,22 +198,29 @@ async def analyze_query(query_text: str) -> Dict[str, Any]:
     2. **Weights**
     • Assign weights for three aspects: "certification", "technology", and "standard".
     • These represent the relative importance or focus of each concept in the query.
+    • "standard" refers to physical product specifications (size, weight, dimensions, precision, etc.)
     • If the query includes phrases like "without certification", "no certification", or "uncertified", set the certification weight to 0.
+    • If the query mentions physical specifications like "size", "weight", "dimensions", "specifications", "tolerance", "precision", boost the standard weight.
     • If none of the three concepts are mentioned or implied, use balanced defaults:
         certification = 0.33  
         technology = 0.33  
         standard = 0.34
     • All weights must be non-negative floats and must sum exactly to 1.0.
-    3. **Short Query Text**
+    3. **Product Name Extraction**
+    • Identify specific product names mentioned in the query (e.g., "蛋捲", "semiconductor", "steel pipe", "LED light").
+    • If no specific product is mentioned, set "product_name" to null.
+    • Extract the most specific product name if multiple are mentioned.
+
+    4. **Short Query Text**
     • Create a concise, meaningful query_text (5–15 words) summarizing the intent of the query.
     • This text will be used for embedding generation.
 
-    4. **List Query**
+    5. **List Query**
     • Set "is_list_query" to true if the query explicitly refers to plural or list-type searches 
         (e.g., "list of companies", "manufacturers in Germany", "suppliers", "distributors").
     • Otherwise, set it to false.
 
-    5. **Industry Scope**
+    6. **Industry Scope**
     • Set "is_all_industries" to true **only if the query explicitly mentions or implies coverage across all industries** 
         (e.g., "all industries", "cross-industry", "no specific industry", "industry-agnostic","without industry", "all industry", "any industry", "no industry filter", "across industries").
     • Queries like "all companies", "all suppliers", or "all manufacturers" do **NOT** imply all industries — they should be false.
@@ -231,6 +236,7 @@ async def analyze_query(query_text: str) -> Dict[str, Any]:
             "standard": 0.0
         }},
         "query_text": "short meaningful text",
+        "product_name": "product name or null",
         "is_list_query": true,
         "is_all_industries": false
     }}
@@ -287,14 +293,28 @@ async def analyze_query(query_text: str) -> Dict[str, Any]:
         print(f"      ❌ OpenAI analysis failed: {e}")
         # Fallback analysis
         is_ranking, ranking_field, ranking_order = is_ranking_query(query_text)
-        return {
-            "country": None,
-            "weight": {
+        is_physical_spec = is_physical_spec_query(query_text)
+
+        # Adjust weights based on physical specification detection
+        if is_physical_spec:
+            weights = {
+                "certification": 0.2,
+                "technology": 0.2,
+                "standard":
+                0.6  # Boost standard weight for physical spec queries
+            }
+        else:
+            weights = {
                 "certification": 0.33,
                 "technology": 0.33,
                 "standard": 0.34
-            },
+            }
+
+        return {
+            "country": None,
+            "weight": weights,
             "query_text": query_text[:50],  # Truncate if too long
+            "product_name": None,  # Fallback doesn't extract product names
             "is_list_query": is_list_query(query_text),
             "is_all_industries": is_all_industries_query(query_text),
             "is_ranking": is_ranking,
@@ -476,10 +496,11 @@ def cosine_similarity(a: List[float], b: List[float]) -> float:
 async def vector_search(query_embedding: List[float],
                         industry_category: Optional[str],
                         country: Optional[str],
+                        product_name: Optional[str] = None,
                         top_k: int = 10) -> List[Dict[str, Any]]:
-    """Perform vector search with industry and country filtering"""
+    """Perform vector search with industry, country, and product name filtering"""
     print(
-        f"      🔍 Searching with industry='{industry_category}', country='{country}', top_k={top_k}"
+        f"      🔍 Searching with industry='{industry_category}', country='{country}', product='{product_name}', top_k={top_k}"
     )
     async with async_session() as session:
         # Build base query with joins
@@ -488,7 +509,8 @@ async def vector_search(query_embedding: List[float],
                        Companies.industry_category, Companies.country,
                        Companies.capital_amount, Companies.revenue,
                        Companies.company_certification_documents,
-                       Companies.patent_count, Products.product_name,
+                       Companies.patent_count, 
+                       Products.product_name,
                        Products.technical_advantages,
                        Products.product_standard,
                        Products.main_raw_materials).select_from(
@@ -506,6 +528,11 @@ async def vector_search(query_embedding: List[float],
                 Companies.industry_category.op('@>')([industry_category]))
         if country:
             filters.append(Companies.country == country)
+        if product_name:
+            # Filter by product name (case-insensitive partial match)
+            filters.append(
+                func.lower(
+                    Products.product_name).like(f"%{product_name.lower()}%"))
 
         if filters:
             query = query.where(and_(*filters))
@@ -547,6 +574,135 @@ async def vector_search(query_embedding: List[float],
         return results[:top_k]
 
 
+def calculate_standard_score(metadata: Dict[str, Any],
+                             query_text: str = "") -> float:
+    """
+    Calculate standard score based on product physical specifications
+    (size, weight, dimensions, precision, etc.)
+    """
+    product_standards = metadata.get("product_standard", [])
+    if not product_standards:
+        return 0.0
+
+    # Join all standards into a single text for analysis
+    standards_text = " ".join(product_standards).lower()
+
+    # Count physical specification indicators
+    physical_indicators = [
+        # Dimensions and size
+        "mm",
+        "cm",
+        "m",
+        "inch",
+        "ft",
+        "size",
+        "dimension",
+        "length",
+        "width",
+        "height",
+        "直徑",
+        "長度",
+        "寬度",
+        "高度",
+        "尺寸",
+        "大小",
+        "規格",
+
+        # Weight and mass
+        "kg",
+        "g",
+        "lb",
+        "weight",
+        "mass",
+        "重量",
+        "質量",
+
+        # Precision and accuracy
+        "±",
+        "tolerance",
+        "accuracy",
+        "precision",
+        "精度",
+        "公差",
+        "誤差",
+
+        # Physical properties
+        "density",
+        "viscosity",
+        "temperature",
+        "pressure",
+        "voltage",
+        "current",
+        "密度",
+        "黏度",
+        "溫度",
+        "壓力",
+        "電壓",
+        "電流",
+
+        # Units and measurements
+        "°c",
+        "°f",
+        "kpa",
+        "mpa",
+        "bar",
+        "psi",
+        "v",
+        "a",
+        "w",
+        "hz",
+        "攝氏",
+        "華氏",
+        "千帕",
+        "兆帕",
+        "巴",
+        "伏特",
+        "安培",
+        "瓦特",
+        "赫茲"
+    ]
+
+    # Count matches with physical indicators
+    matches = sum(1 for indicator in physical_indicators
+                  if indicator in standards_text)
+
+    # Count numerical values (indicating specific measurements)
+    import re
+    numbers = re.findall(r'\d+\.?\d*', standards_text)
+    number_count = len(numbers)
+
+    # Count specification completeness (more detailed = higher score)
+    detail_indicators = ["x", "×", "by", "×", "and", "&", "，", "、", "及"]
+    detail_count = sum(1 for indicator in detail_indicators
+                       if indicator in standards_text)
+
+    # Calculate base score from indicators
+    indicator_score = min(matches / 10.0,
+                          1.0)  # Normalize to 0-1, max at 10 indicators
+
+    # Calculate number score (more specific numbers = better)
+    number_score = min(number_count / 5.0,
+                       1.0)  # Normalize to 0-1, max at 5 numbers
+
+    # Calculate detail score (more detailed specifications = better)
+    detail_score = min(detail_count / 3.0,
+                       1.0)  # Normalize to 0-1, max at 3 detail indicators
+
+    # Calculate length score (more comprehensive = better, but not too verbose)
+    length_score = min(len(standards_text) / 100.0,
+                       1.0)  # Normalize to 0-1, max at 100 chars
+
+    # Weighted combination
+    standard_score = (
+        indicator_score * 0.4 +  # 40% physical indicators
+        number_score * 0.3 +  # 30% numerical specifications
+        detail_score * 0.2 +  # 20% detail level
+        length_score * 0.1  # 10% comprehensiveness
+    )
+
+    return min(standard_score, 1.0)
+
+
 def calculate_weighted_score(result: Dict[str, Any],
                              weights: Dict[str, float]) -> float:
     """Calculate weighted score based on metadata and weights"""
@@ -556,15 +712,15 @@ def calculate_weighted_score(result: Dict[str, Any],
     base_score = result.get("similarity", 0)
 
     # Certification score (based on number of certifications)
-    cert_count = len(metadata.get("certifications", []))
+    cert_count = len(metadata.get("company_certification_documents", []))
     cert_score = min(cert_count / 5.0, 1.0)  # Normalize to 0-1
 
     # Technology score (based on technical_advantages length)
     tech_adv = metadata.get("technical_advantages", "")
     tech_score = min(len(tech_adv) / 200.0, 1.0)  # Normalize to 0-1
 
-    # Delivery score (default to 0.5 since delivery_time field not available)
-    standard_score = 0.5  # Neutral score since field not available standard
+    # Standard score (based on product physical specifications)
+    standard_score = calculate_standard_score(metadata)
 
     # Data completeness score
     data_score = metadata.get("data_score", 0.5)
@@ -605,6 +761,62 @@ async def debug_industries():
         }
 
 
+@router.get("/debug/standard-scoring")
+async def debug_standard_scoring():
+    """Debug endpoint to test standard scoring with sample data"""
+    # Sample metadata with different types of product standards
+    test_cases = [{
+        "name": "High spec product",
+        "metadata": {
+            "product_standard": [
+                "Dimensions: 100mm x 50mm x 25mm", "Weight: 2.5kg ± 0.1kg",
+                "Temperature range: -40°C to +85°C",
+                "Precision: ±0.01mm tolerance"
+            ]
+        }
+    }, {
+        "name": "Basic spec product",
+        "metadata": {
+            "product_standard": ["Size: Large", "Weight: Heavy"]
+        }
+    }, {
+        "name": "Detailed spec product",
+        "metadata": {
+            "product_standard": [
+                "Length: 150mm, Width: 75mm, Height: 30mm", "Weight: 3.2kg",
+                "Density: 2.7 g/cm³", "Operating temperature: -20°C to +60°C",
+                "Pressure rating: 10 bar", "Voltage: 24V DC, Current: 2A",
+                "Accuracy: ±0.5%"
+            ]
+        }
+    }, {
+        "name": "No specifications",
+        "metadata": {
+            "product_standard": []
+        }
+    }]
+
+    results = []
+    for case in test_cases:
+        score = calculate_standard_score(case["metadata"])
+        results.append({
+            "name": case["name"],
+            "standards": case["metadata"]["product_standard"],
+            "standard_score": round(score, 3)
+        })
+
+    return {
+        "test_cases": results,
+        "scoring_explanation": {
+            "indicator_score":
+            "40% - Physical measurement indicators (mm, kg, °C, etc.)",
+            "number_score": "30% - Numerical specifications and values",
+            "detail_score": "20% - Detail level (multiple specs, separators)",
+            "length_score": "10% - Comprehensiveness of specifications"
+        }
+    }
+
+
 @router.post("/search")
 async def search(request: SearchRequest):
     """
@@ -623,6 +835,7 @@ async def search(request: SearchRequest):
         country = analysis["country"]
         weights = analysis["weight"]
         query_text = analysis["query_text"]
+        product_name = analysis.get("product_name", None)
         is_list_query = analysis.get("is_list_query", False)
         is_all_industries = analysis.get("is_all_industries", False)
         is_ranking = analysis.get("is_ranking", False)
@@ -632,6 +845,7 @@ async def search(request: SearchRequest):
         print(f"      Location: {country}")
         print(f"      Weights: {weights}")
         print(f"      Query text: {query_text}")
+        print(f"      Product name: {product_name}")
         print(f"      Is list query: {is_list_query}")
         print(f"      Is all industries: {is_all_industries}")
         print(
@@ -710,7 +924,8 @@ async def search(request: SearchRequest):
             print("\n🔍 Step 4: Performing vector search...")
             vector_results = await vector_search(query_embedding,
                                                  matched_industry_category,
-                                                 country, request.top_k)
+                                                 country, product_name,
+                                                 request.top_k)
             print(f"   ✅ Found {len(vector_results)} vector results")
 
             # Step 5: Calculate weighted scores and rank
@@ -813,10 +1028,3 @@ async def search(request: SearchRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
-
-
-# Include the router in the app
-# app.include_router(router)
-
-# Export the app for Vercel
-# handler = app

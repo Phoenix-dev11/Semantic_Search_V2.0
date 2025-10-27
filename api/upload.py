@@ -50,7 +50,7 @@ def convert_chinese_number_to_int(value: str,
     if not match:
         try:
             result = float(value_str)
-            return result / (10**9) if unit_billions else result
+            return result / (10**8) if unit_billions else result
         except:
             return 0.0
 
@@ -196,29 +196,10 @@ async def upload_file(file: UploadFile = File(...)):
 
     # Ensure OpenAI API key present if embeddings required
     openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if not openai_api_key:
-        print("❌ OPENAI_API_KEY is not set")
-        raise HTTPException(status_code=500,
-                            detail="OPENAI_API_KEY is not set")
-    else:
-        print(f"✅ OpenAI API key found: {openai_api_key[:10]}...")
 
     # OpenAI embeddings model
     embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
     print(f"🤖 Using embedding model: {embedding_model}")
-
-    # Test network connectivity
-    print("🌐 Testing network connectivity...")
-    try:
-        import socket
-        socket.create_connection(("api.openai.com", 443), timeout=10)
-        print("✅ Network connectivity to OpenAI API confirmed")
-    except Exception as network_error:
-        print(f"❌ Network connectivity test failed: {network_error}")
-        print("🔧 This may cause embedding creation to fail")
-
-    print(f"📋 Step 4: Database connection and transaction start")
-    print("💾 Starting database operations...")
 
     # Process records in batches to avoid memory issues
     batch_size = 5  # Reduced batch size to prevent connection timeouts
@@ -343,76 +324,73 @@ async def upload_file(file: UploadFile = File(...)):
                             f"   🏭 Found {len(industries)} industries: {industries}"
                         )
 
-                        # Create one vector per industry (with all products in metadata)
-                        for industry_idx, industry in enumerate(industries):
-                            if not industry or str(industry).strip() == "":
-                                continue
+                        # Create one vector per product (one product per vector)
+                        for product_idx, product_res in enumerate(
+                                product_records):
+                            for industry_idx, industry in enumerate(
+                                    industries):
+                                if not industry or str(industry).strip() == "":
+                                    continue
 
-                            industry = str(industry).strip()
-                            print(
-                                f"   📋 Step 5.{global_record_num}.4.{industry_idx + 1}: Processing industry '{industry}' with {len(product_records)} products"
-                            )
+                                industry = str(industry).strip()
+                                print(
+                                    f"   📋 Step 5.{global_record_num}.4.{product_idx + 1}.{industry_idx + 1}: Processing product '{product_res.product_name}' for industry '{industry}'"
+                                )
 
-                            # Build metadata for this industry with all products
-                            metadata, score = _build_metadata_for_industry_with_products(
-                                rec, industry, product_records)
-                            print(
-                                f"   📈 Data score for industry '{industry}': {score}"
-                            )
+                                # Build metadata for this specific product
+                                metadata = _build_metadata_for_single_product(
+                                    rec, industry, product_res)
 
-                            print(
-                                f"   📋 Step 5.{global_record_num}.5.{industry_idx + 1}: Building embedding text for industry '{industry}'..."
-                            )
-                            # Create embedding text for this industry
-                            embedding_text = _build_embedding_text_for_industry_with_products(
-                                metadata, industry, product_records)
-                            print(
-                                f"   📝 Embedding text length: {len(embedding_text)} chars"
-                            )
+                                print(
+                                    f"   📋 Step 5.{global_record_num}.5.{product_idx + 1}.{industry_idx + 1}: Building embedding text..."
+                                )
+                                # Create embedding text for this product
+                                embedding_text = _build_embedding_text_for_single_product(
+                                    metadata, industry, product_res)
+                                print(
+                                    f"   📝 Embedding text length: {len(embedding_text)} chars"
+                                )
 
-                            print(
-                                f"   📋 Step 5.{global_record_num}.6.{industry_idx + 1}: Creating OpenAI embedding for industry '{industry}'..."
-                            )
-                            # Call OpenAI for embedding
-                            try:
-                                embedding = await _create_embedding_async(
-                                    embedding_text, embedding_model,
-                                    openai_api_key)
                                 print(
-                                    f"   ✅ Embedding created for industry '{industry}', dimension: {len(embedding)}"
+                                    f"   📋 Step 5.{global_record_num}.6.{product_idx + 1}.{industry_idx + 1}: Creating OpenAI embedding..."
                                 )
-                            except Exception as embedding_error:
-                                print(
-                                    f"   ❌ Embedding creation failed for industry '{industry}': {embedding_error}"
-                                )
-                                print(
-                                    f"   🔧 Error type: {type(embedding_error).__name__}"
-                                )
-                                print(
-                                    f"   🔧 Error details: {str(embedding_error)}"
-                                )
-                                raise
+                                # Call OpenAI for embedding
+                                try:
+                                    embedding = await _create_embedding_async(
+                                        embedding_text, embedding_model,
+                                        openai_api_key)
+                                    print(
+                                        f"   ✅ Embedding created, dimension: {len(embedding)}"
+                                    )
+                                except Exception as embedding_error:
+                                    print(
+                                        f"   ❌ Embedding creation failed: {embedding_error}"
+                                    )
+                                    print(
+                                        f"   🔧 Error type: {type(embedding_error).__name__}"
+                                    )
+                                    print(
+                                        f"   🔧 Error details: {str(embedding_error)}"
+                                    )
+                                    raise
 
-                            print(
-                                f"   📋 Step 5.{global_record_num}.7.{industry_idx + 1}: Upserting vector for industry '{industry}'..."
-                            )
-                            # Upsert vector for this industry (no specific product_id)
-                            vec_res, vec_created = await _upsert_vector_for_industry_only(
-                                session,
-                                company_id=company_res.id,
-                                industry_category=industry,
-                                embedding=embedding,
-                                metadata=metadata)
-                            if vec_created:
-                                created_counts["vectors"] += 1
                                 print(
-                                    f"   ✅ Created vector for industry '{industry}': {vec_res.id}"
+                                    f"   📋 Step 5.{global_record_num}.7.{product_idx + 1}.{industry_idx + 1}: Upserting vector..."
                                 )
-                            else:
-                                updated_counts["vectors"] += 1
-                                print(
-                                    f"   🔄 Updated vector for industry '{industry}': {vec_res.id}"
-                                )
+                                # Upsert vector for this product
+                                vec_res, vec_created = await _upsert_vector_for_product(
+                                    session,
+                                    company_id=company_res.id,
+                                    product_id=product_res.id,
+                                    industry_category=industry,
+                                    embedding=embedding,
+                                    metadata=metadata)
+                                if vec_created:
+                                    created_counts["vectors"] += 1
+                                    print(f"   ✅ Created vector: {vec_res.id}")
+                                else:
+                                    updated_counts["vectors"] += 1
+                                    print(f"   🔄 Updated vector: {vec_res.id}")
 
                     print(
                         f"\n📋 Step 6: Committing batch {batch_num + 1} transaction..."
@@ -876,63 +854,6 @@ async def _upsert_product(session: AsyncSession, company_id: str,
         return product, True
 
 
-def _build_metadata(rec: Dict[str, Any]):
-    # Prepare pandas series for scoring
-    score_series = pd.Series({
-        k: rec.get(k)
-        for k in [
-            "company_name", "industry_category", "country", "capital_amount",
-            "revenue", "company_certification_documents", "product_name",
-            "main_raw_materials", "product_standard", "technical_advantages",
-            "patent_count"
-        ]
-    })
-    data_score = calculate_score(score_series)
-
-    metadata = {
-        "company_name": rec.get("company_name"),
-        "industry_category": rec.get("industry_category") or [],
-        "country": rec.get("country"),
-        "product_name": rec.get("product_name"),
-        "main_raw_materials": rec.get("main_raw_materials") or [],
-        "product_standard": rec.get("product_standard") or [],
-        "technical_advantages": rec.get("technical_advantages") or [],
-        "patent_count": rec.get("patent_count"),
-        "data_score": data_score,
-    }
-    return metadata, data_score
-
-
-def _build_metadata_for_industry(rec: Dict[str, Any], industry: str):
-    """Build metadata for a specific industry (single industry per vector)"""
-    # Prepare pandas series for scoring
-    score_series = pd.Series({
-        k: rec.get(k)
-        for k in [
-            "company_name", "country", "capital_amount", "revenue",
-            "company_certification_documents", "product_name",
-            "main_raw_materials", "product_standard", "technical_advantages",
-            "patent_count"
-        ]
-    })
-    # Add the specific industry for scoring
-    score_series["industry_category"] = industry
-    data_score = calculate_score(score_series)
-
-    metadata = {
-        "company_name": rec.get("company_name"),
-        "industry_category": industry,  # Single industry string, not array
-        "country": rec.get("country"),
-        "product_name": rec.get("product_name"),
-        "main_raw_materials": rec.get("main_raw_materials") or [],
-        "product_standard": rec.get("product_standard") or [],
-        "technical_advantages": rec.get("technical_advantages") or [],
-        "patent_count": rec.get("patent_count"),
-        "data_score": data_score,
-    }
-    return metadata, data_score
-
-
 def _build_metadata_for_industry_with_products(rec: Dict[str,
                                                          Any], industry: str,
                                                product_records: List[Any]):
@@ -972,50 +893,26 @@ def _build_metadata_for_industry_with_products(rec: Dict[str,
         all_technical_advantages.extend(rec.get("technical_advantages") or [])
 
     metadata = {
-        "industry_category": industry,  # Single industry string
-        "country": rec.get("country"),
-        "products": products_info,  # Array of all products for this industry
+        "industry_category":
+        industry,  # Single industry string
+        "country":
+        rec.get("country"),
+        "company_certification_documents":
+        rec.get("company_certification_documents") or [],
+        "products":
+        products_info,  # Array of all products for this industry
         "main_raw_materials":
         list(set(all_main_raw_materials)),  # Unique materials
         "product_standard":
         list(set(all_product_standards)),  # Unique standards
         "technical_advantages":
         list(set(all_technical_advantages)),  # Unique advantages
-        "patent_count": rec.get("patent_count"),
-        "data_score": data_score,
+        "patent_count":
+        rec.get("patent_count"),
+        "data_score":
+        data_score,
     }
     return metadata, data_score
-
-
-def _build_embedding_text(metadata: Dict[str, Any]) -> str:
-    parts = [
-        metadata.get("company_name") or "",
-        ", ".join(metadata.get("industry_category")
-                  or []),  # Industry categories
-        metadata.get("product_name") or "",
-        ", ".join(metadata.get("main_raw_materials")
-                  or []),  # Main raw materials
-        ", ".join(metadata.get("product_standard") or []),  # Product standards
-        ", ".join(metadata.get("technical_advantages")
-                  or []),  # Technical advantages
-    ]
-    return " | ".join([str(p) for p in parts if str(p).strip() != ""])
-
-
-def _build_embedding_text_for_industry(metadata: Dict[str, Any],
-                                       industry: str) -> str:
-    """Build embedding text for a specific industry (single industry per vector)"""
-    parts = [
-        metadata.get("company_name") or "",
-        industry,  # Single industry string
-        metadata.get("product_name") or "",
-        ", ".join(metadata.get("main_raw_materials")
-                  or []),  # Main raw materials
-        ", ".join(metadata.get("product_standard") or []),  # Product standards
-        ", ".join(metadata.get("technical_advantages")
-                  or []),  # Technical advantages
-    ]
-    return " | ".join([str(p) for p in parts if str(p).strip() != ""])
 
 
 def _build_embedding_text_for_industry_with_products(
@@ -1034,6 +931,8 @@ def _build_embedding_text_for_industry_with_products(
                   or []),  # All product standards
         ", ".join(metadata.get("technical_advantages")
                   or []),  # All technical advantages
+        ", ".join(metadata.get("company_certification_documents")
+                  or []),  # Company certification documents
     ]
     return " | ".join([str(p) for p in parts if str(p).strip() != ""])
 
@@ -1043,35 +942,20 @@ async def _create_embedding_async(text: str, model: str,
     """Create embeddings using OpenAI client in a background thread.
     The OpenAI Python client methods are synchronous; we offload to a thread.
     """
-    # print(f"      🔧 Embedding function called with:")
-    # print(f"         - Text length: {len(text)}")
-    # print(f"         - Model: {model}")
-    # print(f"         - API key present: {bool(api_key)}")
-
     try:
         client = OpenAI(api_key=api_key)
 
-        # print(f"      ✅ OpenAI client created successfully")
-
         def _sync_create() -> List[float]:
-            # print(f"      🔧 Starting synchronous embedding creation...")
             try:
                 resp = client.embeddings.create(model=model, input=text)
-                # print(f"      ✅ OpenAI API call successful")
-                # print(f"      📊 Response data length: {len(resp.data)}")
+
                 embedding = resp.data[0].embedding
-                # print(f"      📊 Embedding dimension: {len(embedding)}")
                 return embedding
             except Exception as sync_error:
-                # print(
-                #     f"      ❌ Synchronous embedding creation failed: {sync_error}"
-                # )
-                # print(f"      🔧 Sync error type: {type(sync_error).__name__}")
+
                 raise
 
-        # print(f"      🔧 Calling asyncio.to_thread...")
         result = await asyncio.to_thread(_sync_create)
-        # print(f"      ✅ Embedding creation completed successfully")
         return result
     except Exception as e:
         print(f"      ❌ Embedding creation failed: {e}")
@@ -1080,42 +964,65 @@ async def _create_embedding_async(text: str, model: str,
         raise
 
 
-async def _upsert_vector(session: AsyncSession, company_id: str,
-                         product_id: str, embedding: List[float],
-                         metadata: Dict[str, Any]):
-    now = datetime.utcnow().isoformat()
-    # Check if there is an existing vector for this product
-    result = await session.execute(
-        select(VectorDB).where(VectorDB.product_id == product_id))
-    existing = result.scalars().first()
-    if existing:
-        existing.embedding = embedding
-        existing.metadata_json = metadata
-        existing.updated_at = now
-        return existing, False
-    else:
-        vector = VectorDB(
-            id=str(uuid.uuid4()),
-            product_id=product_id,
-            company_id=company_id,
-            embedding=embedding,
-            metadata_json=metadata,
-            created_at=now,
-            updated_at=now,
+def _build_metadata_for_single_product(rec: Dict[str, Any], industry: str,
+                                       product: Any) -> Dict[str, Any]:
+    """Build metadata for a single product"""
+    metadata = {
+        "industry_category":
+        industry,
+        "product_name":
+        product.product_name,
+        "main_raw_materials":
+        rec.get("main_raw_materials") or [],
+        "product_standard":
+        rec.get("product_standard") or [],
+        "technical_advantages":
+        rec.get("technical_advantages") or [],
+        "company_certification_documents":
+        rec.get("company_certification_documents") or []
+    }
+    return metadata
+
+
+def _build_embedding_text_for_single_product(metadata: Dict[str, Any],
+                                             industry: str,
+                                             product: Any) -> str:
+    """Build embedding text for a single product"""
+    text_parts = [
+        f"Industry: {industry}",
+        f"Product: {product.product_name}",
+    ]
+
+    if metadata.get("main_raw_materials"):
+        text_parts.append(
+            f"Raw materials: {', '.join(metadata['main_raw_materials'])}")
+
+    if metadata.get("product_standard"):
+        text_parts.append(
+            f"Standards: {', '.join(metadata['product_standard'])}")
+
+    if metadata.get("technical_advantages"):
+        text_parts.append(
+            f"Advantages: {', '.join(metadata['technical_advantages'])}")
+
+    if metadata.get("company_certification_documents"):
+        text_parts.append(
+            f"Certifications: {', '.join(metadata['company_certification_documents'])}"
         )
-        session.add(vector)
-        return vector, True
+
+    return ". ".join(text_parts)
 
 
-async def _upsert_vector_for_industry(session: AsyncSession, company_id: str,
-                                      product_id: str, industry_category: str,
-                                      embedding: List[float],
-                                      metadata: Dict[str, Any]):
-    """Upsert vector for a specific industry (one vector per industry)"""
+async def _upsert_vector_for_product(session: AsyncSession, company_id: str,
+                                     product_id: str, industry_category: str,
+                                     embedding: List[float],
+                                     metadata: Dict[str, Any]):
+    """Upsert vector for a specific product (one product per vector)"""
     now = datetime.utcnow().isoformat()
-    # Check if there is an existing vector for this product and industry combination
+    # Check if there is an existing vector for this company, product, and industry combination
     result = await session.execute(
-        select(VectorDB).where(VectorDB.product_id == product_id,
+        select(VectorDB).where(VectorDB.company_id == company_id,
+                               VectorDB.product_id == product_id,
                                VectorDB.industry_category == industry_category)
     )
     existing = result.scalars().first()
@@ -1129,7 +1036,7 @@ async def _upsert_vector_for_industry(session: AsyncSession, company_id: str,
             id=str(uuid.uuid4()),
             product_id=product_id,
             company_id=company_id,
-            industry_category=industry_category,  # Single industry per vector
+            industry_category=industry_category,
             embedding=embedding,
             metadata_json=metadata,
             created_at=now,
@@ -1137,45 +1044,3 @@ async def _upsert_vector_for_industry(session: AsyncSession, company_id: str,
         )
         session.add(vector)
         return vector, True
-
-
-async def _upsert_vector_for_industry_only(session: AsyncSession,
-                                           company_id: str,
-                                           industry_category: str,
-                                           embedding: List[float],
-                                           metadata: Dict[str, Any]):
-    """Upsert vector for a specific industry only (no specific product)"""
-    now = datetime.utcnow().isoformat()
-    # Check if there is an existing vector for this company and industry combination
-    result = await session.execute(
-        select(VectorDB).where(
-            VectorDB.company_id == company_id,
-            VectorDB.industry_category == industry_category,
-            VectorDB.product_id.is_(None)  # No specific product
-        ))
-    existing = result.scalars().first()
-    if existing:
-        existing.embedding = embedding
-        existing.metadata_json = metadata
-        existing.updated_at = now
-        return existing, False
-    else:
-        vector = VectorDB(
-            id=str(uuid.uuid4()),
-            product_id=None,  # No specific product
-            company_id=company_id,
-            industry_category=industry_category,  # Single industry per vector
-            embedding=embedding,
-            metadata_json=metadata,
-            created_at=now,
-            updated_at=now,
-        )
-        session.add(vector)
-        return vector, True
-
-
-# # Include the router in the app
-# app.include_router(router)
-
-# # Export the app for Vercel
-# handler = app
