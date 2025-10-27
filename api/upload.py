@@ -25,6 +25,61 @@ load_dotenv()
 router = APIRouter()
 
 
+def convert_chinese_number_to_int(value: str,
+                                  unit_billions: bool = False) -> float:
+    """
+    Convert Chinese number strings to float values.
+    Handles formats like "20億" -> 2000000000.0, "5千萬" -> 50000000.0, etc.
+    
+    Args:
+        value: The Chinese number string to convert
+        unit_billions: If True, divide result by 10^9 to store in billions unit
+    """
+    if not value or pd.isna(value):
+        return 0
+
+    value_str = str(value).strip()
+    if not value_str:
+        return 0
+
+    # Remove any non-numeric and non-Chinese characters except decimal point
+    import re
+
+    # Extract number and unit
+    match = re.match(r'([\d.]+)\s*([億万千百十]*)', value_str)
+    if not match:
+        try:
+            result = float(value_str)
+            return result / (10**8) if unit_billions else result
+        except:
+            return 0.0
+
+    number_part = float(match.group(1))
+    unit_part = match.group(2)
+
+    # Chinese number multipliers
+    multipliers = {
+        '億': 100000000,  # 100 million
+        '万': 10000,  # 10 thousand  
+        '千': 1000,  # thousand
+        '百': 100,  # hundred
+        '十': 10,  # ten
+    }
+
+    multiplier = 1
+    for unit in unit_part:
+        if unit in multipliers:
+            multiplier *= multipliers[unit]
+
+    result = int(number_part * multiplier)
+
+    # Convert to billions unit if requested
+    if unit_billions:
+        return result / (10**9)  # Use division for float result
+
+    return result
+
+
 def calculate_score(row: pd.Series) -> float:
     """
     Calculate score for data.
@@ -86,6 +141,7 @@ async def upload_file(file: UploadFile = File(...)):
     Product Data: File must contain an industry category column (e.g., '產業別', 'industry_category').
     """
     print(f"🚀 UPLOAD START: Processing file {file.filename}")
+    print(f"📋 Step 1: File validation and preparation")
     file_id = str(uuid.uuid4())
 
     # Check file extension
@@ -95,13 +151,11 @@ async def upload_file(file: UploadFile = File(...)):
 
     # Read bytes once
     file_bytes = await file.read()
-    print(f"📊 File size: {len(file_bytes)} bytes")
 
     # Decide parser by extension or content-type
     is_json = file_extension in ["json"] or (file.content_type
                                              and "json" in file.content_type)
     is_tabular = file_extension in ["csv", "xlsx", "xls"]
-    print(f"🔍 File type - JSON: {is_json}, Tabular: {is_tabular}")
 
     if not (is_json or is_tabular):
         raise HTTPException(
@@ -127,98 +181,275 @@ async def upload_file(file: UploadFile = File(...)):
             "status": "ok",
             "message": "No records found",
             "created": 0,
-            "updated": 0
+            "updated": 0,
+            "industry_categories": [],
+            "total_industry_categories": 0
         }
 
+    print(f"📋 Step 3: Environment and API validation")
     # Upsert into DB
     created_counts = {"companies": 0, "products": 0, "vectors": 0}
     updated_counts = {"companies": 0, "products": 0, "vectors": 0}
 
+    # Track all industry categories across all records
+    industry_categories = set()
+
     # Ensure OpenAI API key present if embeddings required
     openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if not openai_api_key:
-        print("❌ OPENAI_API_KEY is not set")
-        raise HTTPException(status_code=500,
-                            detail="OPENAI_API_KEY is not set")
 
     # OpenAI embeddings model
     embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
     print(f"🤖 Using embedding model: {embedding_model}")
 
-    print("💾 Starting database operations...")
-    async with async_session() as session:
-        try:
-            for i, rec in enumerate(records):
-                print(f"\n📝 Processing record {i+1}/{len(records)}")
-                print(f"   Company: {rec.get('company_name', 'N/A')}")
-                print(f"   Product: {rec.get('product_name', 'N/A')}")
-                print(f"   Industry: {rec.get('industry_category', 'N/A')}")
+    # Process records in batches to avoid memory issues
+    batch_size = 5  # Reduced batch size to prevent connection timeouts
+    total_batches = (len(records) + batch_size - 1) // batch_size
+    print(
+        f"📊 Processing {len(records)} records in {total_batches} batches of {batch_size}"
+    )
+    print(
+        f"⏱️ Estimated time: {total_batches * 1.5} minutes (1.5 min per batch)"
+    )
+    print(f"🔧 Using smaller batches to prevent database connection timeouts")
 
-                # Upsert company
-                print("   🏢 Upserting company...")
-                company_res, company_created = await _upsert_company(
-                    session, rec)
-                if company_created:
-                    created_counts["companies"] += 1
-                    print(f"   ✅ Created company: {company_res.id}")
-                else:
-                    updated_counts["companies"] += 1
-                    print(f"   🔄 Updated company: {company_res.id}")
+    for batch_num in range(total_batches):
+        start_idx = batch_num * batch_size
+        end_idx = min(start_idx + batch_size, len(records))
+        batch_records = records[start_idx:end_idx]
 
-                # Upsert product
-                print("   📦 Upserting product...")
-                product_res, product_created = await _upsert_product(
-                    session, company_res.id, rec)
-                if product_created:
-                    created_counts["products"] += 1
-                    print(f"   ✅ Created product: {product_res.id}")
-                else:
-                    updated_counts["products"] += 1
-                    print(f"   🔄 Updated product: {product_res.id}")
+        print(
+            f"\n📋 Step 5: Processing batch {batch_num + 1}/{total_batches} ({len(batch_records)} records)"
+        )
+        print(
+            f"📈 Progress: {((batch_num + 1) / total_batches * 100):.1f}% complete"
+        )
 
-                # Build metadata and score
-                print("   📊 Building metadata and calculating score...")
-                metadata, score = _build_metadata(rec)
-                print(f"   📈 Data score: {score}")
+        # Add retry logic for database connection issues
+        max_retries = 3
+        retry_count = 0
 
-                # Create embedding text per item
-                print("   🔤 Building embedding text...")
-                embedding_text = _build_embedding_text(metadata)
+        while retry_count < max_retries:
+            try:
+                async with async_session() as session:
+                    for i, rec in enumerate(batch_records):
+                        global_record_num = start_idx + i + 1
+                        print(
+                            f"\n📝 Processing record {global_record_num}/{len(records)} (batch {batch_num + 1})"
+                        )
+                        print(f"   Company: {rec.get('company_name', 'N/A')}")
+                        print(f"   Product: {rec.get('product_name', 'N/A')}")
+                        print(
+                            f"   Industry: {rec.get('industry_category', 'N/A')}"
+                        )
+
+                        # Collect industry categories from this record
+                        record_industries = rec.get('industry_category', [])
+                        if isinstance(record_industries, list):
+                            for industry in record_industries:
+                                if industry and str(industry).strip():
+                                    industry_categories.add(
+                                        str(industry).strip())
+                        elif record_industries and str(
+                                record_industries).strip():
+                            industry_categories.add(
+                                str(record_industries).strip())
+
+                        # Log industry categories being collected
+                        if record_industries:
+                            print(f"   🏭 Industries: {record_industries}")
+
+                        print(
+                            f"   📋 Step 5.{global_record_num}.1: Upserting company..."
+                        )
+                        # Upsert company
+                        company_res, company_created = await _upsert_company(
+                            session, rec)
+                        if company_created:
+                            created_counts["companies"] += 1
+                            print(f"   ✅ Created company: {company_res.id}")
+                        else:
+                            updated_counts["companies"] += 1
+                            print(f"   🔄 Updated company: {company_res.id}")
+
+                        print(
+                            f"   📋 Step 5.{global_record_num}.2: Processing products..."
+                        )
+                        # Get products for this record (handle multiple products separated by Chinese comma)
+                        products = _parse_products(rec.get("product_name", ""))
+                        print(
+                            f"   📦 Found {len(products)} products: {products}")
+
+                        # Create one product record per product
+                        product_records = []
+                        for product_idx, product_name in enumerate(products):
+                            if not product_name or str(
+                                    product_name).strip() == "":
+                                continue
+
+                            product_name = str(product_name).strip()
+                            print(
+                                f"   📋 Step 5.{global_record_num}.2.{product_idx + 1}: Processing product '{product_name}'"
+                            )
+
+                            # Create a copy of the record with this specific product
+                            product_rec = rec.copy()
+                            product_rec["product_name"] = product_name
+
+                            # Upsert product
+                            product_res, product_created = await _upsert_product(
+                                session, company_res.id, product_rec)
+                            if product_created:
+                                created_counts["products"] += 1
+                                print(
+                                    f"   ✅ Created product: {product_res.id}")
+                            else:
+                                updated_counts["products"] += 1
+                                print(
+                                    f"   🔄 Updated product: {product_res.id}")
+
+                            product_records.append(product_res)
+
+                        print(
+                            f"   📋 Step 5.{global_record_num}.3: Processing industries for vector creation..."
+                        )
+                        # Get industries for this record
+                        industries = rec.get("industry_category", [])
+                        if not industries:
+                            print(
+                                f"   ⚠️ No industries found, skipping vector creation"
+                            )
+                            continue
+
+                        print(
+                            f"   🏭 Found {len(industries)} industries: {industries}"
+                        )
+
+                        # Create one vector per product (one product per vector)
+                        for product_idx, product_res in enumerate(
+                                product_records):
+                            for industry_idx, industry in enumerate(
+                                    industries):
+                                if not industry or str(industry).strip() == "":
+                                    continue
+
+                                industry = str(industry).strip()
+                                print(
+                                    f"   📋 Step 5.{global_record_num}.4.{product_idx + 1}.{industry_idx + 1}: Processing product '{product_res.product_name}' for industry '{industry}'"
+                                )
+
+                                # Build metadata for this specific product
+                                metadata = _build_metadata_for_single_product(
+                                    rec, industry, product_res)
+
+                                print(
+                                    f"   📋 Step 5.{global_record_num}.5.{product_idx + 1}.{industry_idx + 1}: Building embedding text..."
+                                )
+                                # Create embedding text for this product
+                                embedding_text = _build_embedding_text_for_single_product(
+                                    metadata, industry, product_res)
+                                print(
+                                    f"   📝 Embedding text length: {len(embedding_text)} chars"
+                                )
+
+                                print(
+                                    f"   📋 Step 5.{global_record_num}.6.{product_idx + 1}.{industry_idx + 1}: Creating OpenAI embedding..."
+                                )
+                                # Call OpenAI for embedding
+                                try:
+                                    embedding = await _create_embedding_async(
+                                        embedding_text, embedding_model,
+                                        openai_api_key)
+                                    print(
+                                        f"   ✅ Embedding created, dimension: {len(embedding)}"
+                                    )
+                                except Exception as embedding_error:
+                                    print(
+                                        f"   ❌ Embedding creation failed: {embedding_error}"
+                                    )
+                                    print(
+                                        f"   🔧 Error type: {type(embedding_error).__name__}"
+                                    )
+                                    print(
+                                        f"   🔧 Error details: {str(embedding_error)}"
+                                    )
+                                    raise
+
+                                print(
+                                    f"   📋 Step 5.{global_record_num}.7.{product_idx + 1}.{industry_idx + 1}: Upserting vector..."
+                                )
+                                # Upsert vector for this product
+                                vec_res, vec_created = await _upsert_vector_for_product(
+                                    session,
+                                    company_id=company_res.id,
+                                    product_id=product_res.id,
+                                    industry_category=industry,
+                                    embedding=embedding,
+                                    metadata=metadata)
+                                if vec_created:
+                                    created_counts["vectors"] += 1
+                                    print(f"   ✅ Created vector: {vec_res.id}")
+                                else:
+                                    updated_counts["vectors"] += 1
+                                    print(f"   🔄 Updated vector: {vec_res.id}")
+
+                    print(
+                        f"\n📋 Step 6: Committing batch {batch_num + 1} transaction..."
+                    )
+                    await session.commit()
+                    print(
+                        f"✅ Batch {batch_num + 1} transaction committed successfully"
+                    )
+                    break  # Success, exit retry loop
+
+            except Exception as e:
+                retry_count += 1
                 print(
-                    f"   📝 Embedding text length: {len(embedding_text)} chars")
+                    f"❌ Batch {batch_num + 1} database error (attempt {retry_count}/{max_retries}): {e}"
+                )
+                print(f"🔧 Error type: {type(e).__name__}")
+                print(f"🔧 Error details: {str(e)}")
 
-                # Call OpenAI for embedding
-                print("   🤖 Creating OpenAI embedding...")
-                embedding = await _create_embedding_async(
-                    embedding_text, embedding_model, openai_api_key)
-                print(f"   ✅ Embedding created, dimension: {len(embedding)}")
-
-                # Upsert vector
-                print("   🧮 Upserting vector...")
-                vec_res, vec_created = await _upsert_vector(
-                    session,
-                    company_id=company_res.id,
-                    product_id=product_res.id,
-                    embedding=embedding,
-                    metadata=metadata)
-                if vec_created:
-                    created_counts["vectors"] += 1
-                    print(f"   ✅ Created vector: {vec_res.id}")
+                if retry_count < max_retries:
+                    print(f"🔄 Retrying batch {batch_num + 1} in 5 seconds...")
+                    import asyncio
+                    await asyncio.sleep(5)  # Wait 5 seconds before retry
                 else:
-                    updated_counts["vectors"] += 1
-                    print(f"   🔄 Updated vector: {vec_res.id}")
+                    print(
+                        f"❌ Batch {batch_num + 1} failed after {max_retries} attempts"
+                    )
+                    try:
+                        print("🔄 Attempting database rollback...")
+                        await session.rollback()
+                        print("✅ Database rollback completed")
+                    except Exception as rollback_error:
+                        print(f"❌ Rollback failed: {rollback_error}")
+                        print(
+                            f"🔧 Rollback error type: {type(rollback_error).__name__}"
+                        )
+                    raise
 
-            print("\n💾 Committing transaction...")
-            await session.commit()
-            print("✅ Transaction committed successfully")
-        except Exception as e:
-            print(f"❌ Database error: {e}")
-            await session.rollback()
-            raise
-
+    print(f"📋 Step 7: Final summary and response preparation")
     # Update todos via return payload
     total_created = sum(created_counts.values())
     total_updated = sum(updated_counts.values())
+
+    # Convert industry_categories set to sorted list for consistent output
+    industry_categories_list = sorted(list(industry_categories))
+    print(
+        f"📊 Found {len(industry_categories_list)} unique industry categories: {industry_categories_list}"
+    )
+
+    print(f"🎉 UPLOAD COMPLETE:")
+    print(f"   📁 File: {file.filename}")
+    print(f"   📊 Records processed: {len(records)}")
+    print(f"   🏢 Companies created: {created_counts['companies']}")
+    print(f"   🏢 Companies updated: {updated_counts['companies']}")
+    print(f"   📦 Products created: {created_counts['products']}")
+    print(f"   📦 Products updated: {updated_counts['products']}")
+    print(f"   🧮 Vectors created: {created_counts['vectors']}")
+    print(f"   🧮 Vectors updated: {updated_counts['vectors']}")
+    print(f"   🏭 Industry categories: {len(industry_categories_list)}")
+
     return {
         "status": "ok",
         "file_id": file_id,
@@ -226,6 +457,8 @@ async def upload_file(file: UploadFile = File(...)):
         "updated": updated_counts,
         "total_created": total_created,
         "total_updated": total_updated,
+        "industry_categories": industry_categories_list,
+        "total_industry_categories": len(industry_categories_list),
     }
 
 
@@ -234,17 +467,48 @@ def _parse_tabular_payload(file_bytes: bytes,
     buffer = io.BytesIO(file_bytes)
     if file_extension == "csv":
         df = pd.read_csv(buffer)
+        # Normalize column names to lower snake for mapping
+        df.columns = [str(c).strip() for c in df.columns]
+        dataframes = [df]
+        sheet_names = ["CSV"]
     else:
-        df = pd.read_excel(buffer)
+        # Read all sheets from Excel file
+        excel_file = pd.ExcelFile(buffer)
+        sheet_names = excel_file.sheet_names
+        print(f"📊 Found {len(sheet_names)} sheets: {sheet_names}")
 
-    # Normalize column names to lower snake for mapping
-    df.columns = [str(c).strip() for c in df.columns]
+        dataframes = []
+        for sheet_name in sheet_names:
+            print(f"📋 Processing sheet: {sheet_name}")
+            df = pd.read_excel(buffer, sheet_name=sheet_name)
+            # Normalize column names to lower snake for mapping
+            df.columns = [str(c).strip() for c in df.columns]
+            dataframes.append(df)
+            print(f"   📈 Sheet '{sheet_name}' has {len(df)} rows")
 
     records: List[Dict[str, Any]] = []
-    for _, row in df.iterrows():
-        normalized = _normalize_row_from_tabular(row)
-        if normalized:
-            records.append(normalized)
+    total_records = 0
+
+    for i, df in enumerate(dataframes):
+        sheet_name = sheet_names[i] if i < len(sheet_names) else f"Sheet_{i+1}"
+        print(f"🔄 Processing {sheet_name} with {len(df)} rows...")
+
+        sheet_records = 0
+        for _, row in df.iterrows():
+            normalized = _normalize_row_from_tabular(row)
+            if normalized:
+                # Add sheet information to metadata for tracking
+                normalized["source_sheet"] = sheet_name
+                records.append(normalized)
+                sheet_records += 1
+
+        print(
+            f"   ✅ Processed {sheet_records} valid records from {sheet_name}")
+        total_records += sheet_records
+
+    print(
+        f"📊 Total records processed: {total_records} from {len(sheet_names)} sheets"
+    )
     return records
 
 
@@ -259,28 +523,59 @@ def _parse_json_payload(file_bytes: bytes) -> List[Dict[str, Any]]:
     return records
 
 
+def _parse_products(product_name: str) -> List[str]:
+    """Parse product names separated by Chinese commas"""
+    if not product_name or pd.isna(product_name):
+        return []
+
+    product_str = str(product_name).strip()
+    if not product_str:
+        return []
+
+    # Split by Chinese comma (，) and other common separators
+    separators = ["、", "／"]
+    products = []
+
+    for separator in separators:
+        if separator in product_str:
+            products = [
+                p.strip() for p in product_str.split(separator) if p.strip()
+            ]
+            break
+
+    # If no separators found, return the single product
+    if not products:
+        products = [product_str]
+
+    return products
+
+
 def _normalize_row_from_tabular(row: pd.Series) -> Dict[str, Any]:
     get = lambda *keys: next((row.get(k) for k in keys
                               if k in row and not (pd.isna(row.get(k)) or str(
                                   row.get(k)).strip() == "")), None)
 
-    # Handle common variants from the screenshot/example
-    company_name = get("Company_Name", "company_name", "Company", "name")
+    # Handle both English and Mandarin column names
+    # English variants
+    company_name = get("Company_Name", "company_name", "公司名稱", "公司名称")
     industry_category = get("Industry_category", "Industry",
-                            "industry_category", "industry")
-    location = get("Location", "location")
-    capital_amount = get("Capital_Amour", "capital_amount", "Capital_amount")
-    revenue = get("Revenue", "revenue")
+                            "industry_category", "industry", "產業別", "产业别")
+    country = get("country", "Country", "國家", "国家")
+    capital_amount = get("Capital_Amour", "capital_amount", "Capital_amount",
+                         "資本額", "资本额")
+    revenue = get("Revenue", "revenue", "營業額", "营业额")
     cert_docs = get("Company_Certification_Documents",
-                    "Company_certification_documents", "cert_docs")
-    product_name = get("Product_Name", "product_name")
-    main_raw_materials = get("Main_Raw_Materials", "main_raw_materials")
-    product_standard = get("Product_Standard", "product_standard")
-    technical_advantages = get("Technical_advantages", "technical_advantages")
-    product_certs = get("product_certifications",
-                        "Product_Certification_Materials")
-    patent = get("Patent", "patent")
-    delivery_time = get("Delivery_time", "delivery_time")
+                    "Company_certification_documents", "cert_docs", "公司認證資料",
+                    "公司简介")
+    product_name = get("Product_Name", "product_name", "產品名稱", "产品名称")
+    main_raw_materials = get("Main_Raw_Materials", "main_raw_materials",
+                             "主要原料")
+    product_standard = get("Product_Standard", "product_standard",
+                           "產品規格(尺寸、精度)", "产品规格(尺寸、精度)")
+    technical_advantages = get("Technical_advantages", "technical_advantages",
+                               "技術優勢", "技术优势")
+
+    patent_count = get("Patent_Count", "patent_count", "專利數量")
 
     # Convert types
     def to_int(v):
@@ -289,13 +584,29 @@ def _normalize_row_from_tabular(row: pd.Series) -> Dict[str, Any]:
         except Exception:
             return None
 
+    def to_chinese_int(v):
+        """Convert Chinese number strings to float values"""
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return 0.0
+        return convert_chinese_number_to_int(str(v))
+
+    def to_chinese_int_billions(v):
+        """Convert Chinese number strings to float values in billions unit (10^9)"""
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return 0.0
+        original_value = str(v)
+        result = convert_chinese_number_to_int(original_value,
+                                               unit_billions=True)
+        print(f"   💰 Converted '{original_value}' to {result} (billions unit)")
+        return result
+
     def to_bool(v):
         if isinstance(v, bool):
             return v
         if v is None:
             return None
         s = str(v).strip().lower()
-        return s in ["true", "1", "yes", "y"]
+        return s in ["true", "1", "yes", "y", "是", "有"]
 
     def to_list(v):
         if v is None or (isinstance(v, float) and pd.isna(v)):
@@ -303,51 +614,60 @@ def _normalize_row_from_tabular(row: pd.Series) -> Dict[str, Any]:
         if isinstance(v, list):
             return [str(x) for x in v]
         if isinstance(v, str):
-            # split by commas or semicolons
-            parts = [
-                p.strip() for p in v.replace(";", ",").split(",")
-                if p.strip() != ""
-            ]
+            # split by commas, semicolons, forward slashes, or Chinese comma
+            parts = []
+            for separator in ["／", "、"]:
+                if separator in v:
+                    parts = [
+                        p.strip() for p in v.split(separator)
+                        if p.strip() != ""
+                    ]
+                    break
+            if not parts:
+                parts = [str(v)]
             return parts
         return [str(v)]
 
     normalized = {
         "company_name":
         str(company_name).strip() if company_name is not None else None,
-        "industry_category":
-        str(industry_category).strip()
-        if industry_category is not None else None,
-        "location":
-        str(location).strip() if location is not None else None,
-        "capital_amount":
-        to_int(capital_amount),
-        "revenue":
-        to_int(revenue),
-        "company_certification_documents":
-        str(cert_docs).strip() if cert_docs is not None else None,
+        "industry_category": to_list(industry_category),  # Vector/array
+        "country": str(country).strip() if country is not None else None,
+        "capital_amount": to_chinese_int_billions(
+            capital_amount
+        ),  # Convert Chinese numbers like "20億" to billions unit
+        "revenue": to_chinese_int_billions(
+            revenue),  # Convert Chinese numbers like "20億" to billions unit
+        "company_certification_documents": to_list(cert_docs),  # Vector/array
         "product_name":
         str(product_name).strip() if product_name is not None else None,
-        "main_raw_materials":
-        str(main_raw_materials).strip()
-        if main_raw_materials is not None else None,
-        "product_standard":
-        to_list(product_standard),
-        "technical_advantages":
-        str(technical_advantages).strip()
-        if technical_advantages is not None else None,
-        "product_certifications":
-        to_list(product_certs),
-        "patent":
-        to_bool(patent),
-        "delivery_time":
-        to_int(delivery_time),
+        "main_raw_materials": to_list(main_raw_materials),  # Vector/array
+        "product_standard": to_list(product_standard),  # Vector/array
+        "technical_advantages": to_list(technical_advantages),  # Vector/array
+        "patent_count": to_int(patent_count),
     }
     return normalized
 
 
 def _normalize_row_from_json(item: Dict[str, Any]) -> Dict[str, Any]:
-    # example.yaml structure
-    product = item.get("Product") or {}
+    # Support both English and Chinese field names
+    product = item.get("Product") or item.get("產品") or {}
+
+    def get_field(*keys):
+        """Get field value from multiple possible key names (English and Chinese)"""
+        for key in keys:
+            if key in item and item[key] is not None and str(
+                    item[key]).strip() != "":
+                return item[key]
+        return None
+
+    def get_product_field(*keys):
+        """Get field value from product object with multiple possible key names"""
+        for key in keys:
+            if key in product and product[key] is not None and str(
+                    product[key]).strip() != "":
+                return product[key]
+        return None
 
     def to_list(v):
         if v is None:
@@ -355,46 +675,94 @@ def _normalize_row_from_json(item: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(v, list):
             return [str(x) for x in v]
         if isinstance(v, str):
-            return [
-                p.strip() for p in v.replace(";", ",").split(",") if p.strip()
-            ]
+            # split by commas, semicolons, forward slashes, or Chinese comma
+            parts = []
+            for separator in ["／", "、"]:
+                if separator in v:
+                    parts = [
+                        p.strip() for p in v.split(separator)
+                        if p.strip() != ""
+                    ]
+                    break
+            if not parts:
+                parts = [str(v)]
+            return parts
         return [str(v)]
+
+    def to_chinese_int(v):
+        """Convert Chinese number strings to float values"""
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return 0.0
+        return convert_chinese_number_to_int(str(v))
+
+    def to_chinese_int_billions(v):
+        """Convert Chinese number strings to float values in billions unit (10^9)"""
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return 0.0
+        original_value = str(v)
+        result = convert_chinese_number_to_int(original_value,
+                                               unit_billions=True)
+        print(f"   💰 Converted '{original_value}' to {result} (billions unit)")
+        return result
+
+    def to_bool(v):
+        if isinstance(v, bool):
+            return v
+        if v is None:
+            return None
+        s = str(v).strip().lower()
+        return s in ["true", "1", "yes", "y", "是", "有"]
+
+    def to_int(v):
+        try:
+            return int(v) if v is not None and str(v).strip() != "" else 0
+        except Exception:
+            return 0
+
+    # Handle both English and Chinese field names
+    company_name = get_field("Company_Name", "company_name", "公司名稱", "公司名称")
+    industry_category = get_field("Industry_category", "Industry",
+                                  "industry_category", "industry", "產業別",
+                                  "产业别")
+    country = get_field("country", "Country", "國家", "国家")
+    capital_amount = get_field("Capital_Amount", "capital_amount",
+                               "Capital_amount", "資本額", "资本额")
+    revenue = get_field("Revenue", "revenue", "營業額", "营业额")
+    cert_docs = get_field("Company_Certification_Documents",
+                          "Company_certification_documents", "cert_docs",
+                          "公司認證資料", "公司认证资料", "公司简介")
+
+    # Product fields with bilingual support
+    product_name = get_product_field("Product_Name", "product_name", "產品名稱",
+                                     "产品名称")
+    main_raw_materials = get_product_field("Main_Raw_Materials",
+                                           "main_raw_materials", "主要原料")
+    product_standard = get_product_field("Product_Standard",
+                                         "product_standard", "產品規格(尺寸、精度)",
+                                         "产品规格(尺寸、精度)")
+    technical_advantages = get_product_field("Technical_Advantages",
+                                             "technical_advantages", "技術優勢",
+                                             "技术优势")
+
+    patent_count = get_field("Patent_Count", "patent_count", "專利數量", "专利数量")
 
     normalized = {
         "company_name":
-        item.get("Company_Name") or item.get("company_name"),
-        "industry_category":
-        item.get("Industry_category") or item.get("industry")
-        or item.get("industry_category"),
-        "location":
-        item.get("Location") or item.get("location"),
-        "capital_amount":
-        item.get("capital_amount"),
-        "revenue":
-        item.get("Revenue") or item.get("revenue"),
-        "company_certification_documents":
-        item.get("Company_certification_documents")
-        or item.get("Company_Certification_Documents"),
+        str(company_name).strip() if company_name is not None else None,
+        "industry_category": to_list(industry_category),  # Array
+        "country": str(country).strip() if country is not None else None,
+        "capital_amount": to_chinese_int_billions(
+            capital_amount),  # Convert Chinese numbers to billions unit
+        "revenue": to_chinese_int_billions(
+            revenue),  # Convert Chinese numbers to billions unit
+        "company_certification_documents": to_list(cert_docs),  # Array
         "product_name":
-        product.get("Product_Name") or product.get("product_name"),
-        "main_raw_materials":
-        product.get("Main_Raw_Materials") or product.get("main_raw_materials"),
-        "product_standard":
-        to_list(
-            product.get("Product_Standard")
-            or product.get("product_standard")),
-        "technical_advantages":
-        product.get("Technical_Advantages")
-        or product.get("technical_advantages"),
-        "product_certifications":
-        to_list(
-            product.get("Product_Certification_Materials")
-            or product.get("product_certifications")),
-        "patent":
-        item.get("Patent") if isinstance(item.get("Patent"), bool) else str(
-            item.get("Patent")).lower() in ["true", "1", "yes", "y"],
-        "delivery_time":
-        item.get("Delivery_time") or item.get("delivery_time"),
+        str(product_name).strip() if product_name is not None else None,
+        "main_raw_materials": to_list(main_raw_materials),  # Array
+        "product_standard": to_list(product_standard),  # Array
+        "technical_advantages": to_list(technical_advantages),  # Array
+        "patent_count":
+        to_int(patent_count),  # Convert boolean Patent to count
     }
     return normalized
 
@@ -410,35 +778,35 @@ async def _upsert_company(session: AsyncSession, rec: Dict[str, Any]):
         select(Companies).where(Companies.name == company_name))
     existing = result.scalars().first()
     if existing:
-        existing.industry_category = rec.get(
-            "industry_category") or existing.industry_category
-        existing.location = rec.get("location") or existing.location
+        # Handle industry_category as array
+        if rec.get("industry_category"):
+            existing.industry_category = rec["industry_category"]
+        existing.country = rec.get("country") or existing.country
         if rec.get("capital_amount") is not None:
-            existing.capital_amount = rec["capital_amount"]
+            existing.capital_amount = rec[
+                "capital_amount"]  # Float value in billions unit
         if rec.get("revenue") is not None:
-            existing.revenue = rec["revenue"]
+            existing.revenue = rec["revenue"]  # Float value in billions unit
         if rec.get("company_certification_documents") is not None:
             existing.company_certification_documents = rec[
                 "company_certification_documents"]
-        if rec.get("patent") is not None:
-            existing.patent = bool(rec["patent"])
-        if rec.get("delivery_time") is not None:
-            existing.delivery_time = rec["delivery_time"]
+        if rec.get("patent_count") is not None:
+            existing.patent_count = rec["patent_count"]
         existing.updated_at = now
         return existing, False
     else:
         company = Companies(
             id=str(uuid.uuid4()),
             name=company_name,
-            industry_category=rec.get("industry_category") or "",
-            location=rec.get("location") or "",
-            capital_amount=rec.get("capital_amount") or 0,
-            revenue=rec.get("revenue") or 0,
+            industry_category=rec.get("industry_category")
+            or [],  # Array of industries
+            country=rec.get("country") or "",
+            capital_amount=rec.get("capital_amount")
+            or 0.0,  # Float value in billions unit
+            revenue=rec.get("revenue") or 0.0,  # Float value in billions unit
             company_certification_documents=rec.get(
-                "company_certification_documents") or "",
-            patent=bool(rec.get("patent"))
-            if rec.get("patent") is not None else False,
-            delivery_time=rec.get("delivery_time") or 0,
+                "company_certification_documents") or [],
+            patent_count=rec.get("patent_count") or 0,
             created_at=now,
             updated_at=now,
         )
@@ -460,20 +828,15 @@ async def _upsert_product(session: AsyncSession, company_id: str,
                                Products.product_name == product_name))
     existing = result.scalars().first()
 
-    standards = rec.get("product_standard") or []
-    certs = rec.get("product_certifications") or []
-    if isinstance(standards, str):
-        standards = [s for s in standards.split(",") if s.strip()]
-    if isinstance(certs, str):
-        certs = [s for s in certs.split(",") if s.strip()]
+    # Handle vector fields properly
+    main_raw_materials = rec.get("main_raw_materials") or []
+    product_standard = rec.get("product_standard") or []
+    technical_advantages = rec.get("technical_advantages") or []
 
     if existing:
-        existing.main_raw_materials = rec.get(
-            "main_raw_materials") or existing.main_raw_materials
-        existing.product_standard = standards or existing.product_standard
-        existing.technical_advantages = rec.get(
-            "technical_advantages") or existing.technical_advantages
-        existing.product_certifications = certs or existing.product_certifications
+        existing.main_raw_materials = main_raw_materials or existing.main_raw_materials
+        existing.product_standard = product_standard or existing.product_standard
+        existing.technical_advantages = technical_advantages or existing.technical_advantages
         existing.updated_at = now
         return existing, False
     else:
@@ -481,10 +844,9 @@ async def _upsert_product(session: AsyncSession, company_id: str,
             id=str(uuid.uuid4()),
             company_id=company_id,
             product_name=product_name,
-            main_raw_materials=rec.get("main_raw_materials") or "",
-            product_standard=standards,
-            technical_advantages=rec.get("technical_advantages") or "",
-            product_certifications=certs,
+            main_raw_materials=main_raw_materials,
+            product_standard=product_standard,
+            technical_advantages=technical_advantages,
             created_at=now,
             updated_at=now,
         )
@@ -492,41 +854,85 @@ async def _upsert_product(session: AsyncSession, company_id: str,
         return product, True
 
 
-def _build_metadata(rec: Dict[str, Any]):
+def _build_metadata_for_industry_with_products(rec: Dict[str,
+                                                         Any], industry: str,
+                                               product_records: List[Any]):
+    """Build metadata for a specific industry with all products (industry-based vector)"""
     # Prepare pandas series for scoring
     score_series = pd.Series({
         k: rec.get(k)
         for k in [
-            "company_name", "industry_category", "location", "product_name",
-            "main_raw_materials", "product_standard", "technical_advantages",
-            "product_certifications", "delivery_time"
+            "country", "capital_amount", "revenue",
+            "company_certification_documents", "patent_count"
         ]
     })
+    # Add the specific industry for scoring
+    score_series["industry_category"] = industry
     data_score = calculate_score(score_series)
 
+    # Collect all product information
+    products_info = []
+    all_main_raw_materials = []
+    all_product_standards = []
+    all_technical_advantages = []
+
+    for product in product_records:
+        products_info.append({
+            "product_name":
+            product.product_name,
+            "main_raw_materials":
+            rec.get("main_raw_materials") or [],
+            "product_standard":
+            rec.get("product_standard") or [],
+            "technical_advantages":
+            rec.get("technical_advantages") or []
+        })
+        # Collect all materials, standards, and advantages
+        all_main_raw_materials.extend(rec.get("main_raw_materials") or [])
+        all_product_standards.extend(rec.get("product_standard") or [])
+        all_technical_advantages.extend(rec.get("technical_advantages") or [])
+
     metadata = {
-        "company_name": rec.get("company_name"),
-        "industry_category": rec.get("industry_category"),
-        "location": rec.get("location"),
-        "product_name": rec.get("product_name"),
-        "main_raw_materials": rec.get("main_raw_materials"),
-        "product_standard": rec.get("product_standard") or [],
-        "technical_advantages": rec.get("technical_advantages"),
-        "certifications": rec.get("product_certifications") or [],
-        "delivery_time": rec.get("delivery_time"),
-        "data_score": data_score,
+        "industry_category":
+        industry,  # Single industry string
+        "country":
+        rec.get("country"),
+        "company_certification_documents":
+        rec.get("company_certification_documents") or [],
+        "products":
+        products_info,  # Array of all products for this industry
+        "main_raw_materials":
+        list(set(all_main_raw_materials)),  # Unique materials
+        "product_standard":
+        list(set(all_product_standards)),  # Unique standards
+        "technical_advantages":
+        list(set(all_technical_advantages)),  # Unique advantages
+        "patent_count":
+        rec.get("patent_count"),
+        "data_score":
+        data_score,
     }
     return metadata, data_score
 
 
-def _build_embedding_text(metadata: Dict[str, Any]) -> str:
+def _build_embedding_text_for_industry_with_products(
+        metadata: Dict[str,
+                       Any], industry: str, product_records: List[Any]) -> str:
+    """Build embedding text for a specific industry with all products (industry-based vector)"""
+    # Extract product names
+    product_names = [p.product_name for p in product_records]
+
     parts = [
-        metadata.get("company_name") or "",
-        metadata.get("product_name") or "",
-        metadata.get("main_raw_materials") or "",
-        ", ".join(metadata.get("product_standard") or []),
-        metadata.get("technical_advantages") or "",
-        ", ".join(metadata.get("certifications") or []),
+        industry,  # Single industry string
+        ", ".join(product_names),  # All product names
+        ", ".join(metadata.get("main_raw_materials")
+                  or []),  # All raw materials
+        ", ".join(metadata.get("product_standard")
+                  or []),  # All product standards
+        ", ".join(metadata.get("technical_advantages")
+                  or []),  # All technical advantages
+        ", ".join(metadata.get("company_certification_documents")
+                  or []),  # Company certification documents
     ]
     return " | ".join([str(p) for p in parts if str(p).strip() != ""])
 
@@ -536,22 +942,89 @@ async def _create_embedding_async(text: str, model: str,
     """Create embeddings using OpenAI client in a background thread.
     The OpenAI Python client methods are synchronous; we offload to a thread.
     """
-    client = OpenAI(api_key=api_key)
+    try:
+        client = OpenAI(api_key=api_key)
 
-    def _sync_create() -> List[float]:
-        resp = client.embeddings.create(model=model, input=text)
-        return resp.data[0].embedding
+        def _sync_create() -> List[float]:
+            try:
+                resp = client.embeddings.create(model=model, input=text)
 
-    return await asyncio.to_thread(_sync_create)
+                embedding = resp.data[0].embedding
+                return embedding
+            except Exception as sync_error:
+
+                raise
+
+        result = await asyncio.to_thread(_sync_create)
+        return result
+    except Exception as e:
+        print(f"      ❌ Embedding creation failed: {e}")
+        print(f"      🔧 Error type: {type(e).__name__}")
+        print(f"      🔧 Error details: {str(e)}")
+        raise
 
 
-async def _upsert_vector(session: AsyncSession, company_id: str,
-                         product_id: str, embedding: List[float],
-                         metadata: Dict[str, Any]):
+def _build_metadata_for_single_product(rec: Dict[str, Any], industry: str,
+                                       product: Any) -> Dict[str, Any]:
+    """Build metadata for a single product"""
+    metadata = {
+        "industry_category":
+        industry,
+        "product_name":
+        product.product_name,
+        "main_raw_materials":
+        rec.get("main_raw_materials") or [],
+        "product_standard":
+        rec.get("product_standard") or [],
+        "technical_advantages":
+        rec.get("technical_advantages") or [],
+        "company_certification_documents":
+        rec.get("company_certification_documents") or []
+    }
+    return metadata
+
+
+def _build_embedding_text_for_single_product(metadata: Dict[str, Any],
+                                             industry: str,
+                                             product: Any) -> str:
+    """Build embedding text for a single product"""
+    text_parts = [
+        f"Industry: {industry}",
+        f"Product: {product.product_name}",
+    ]
+
+    if metadata.get("main_raw_materials"):
+        text_parts.append(
+            f"Raw materials: {', '.join(metadata['main_raw_materials'])}")
+
+    if metadata.get("product_standard"):
+        text_parts.append(
+            f"Standards: {', '.join(metadata['product_standard'])}")
+
+    if metadata.get("technical_advantages"):
+        text_parts.append(
+            f"Advantages: {', '.join(metadata['technical_advantages'])}")
+
+    if metadata.get("company_certification_documents"):
+        text_parts.append(
+            f"Certifications: {', '.join(metadata['company_certification_documents'])}"
+        )
+
+    return ". ".join(text_parts)
+
+
+async def _upsert_vector_for_product(session: AsyncSession, company_id: str,
+                                     product_id: str, industry_category: str,
+                                     embedding: List[float],
+                                     metadata: Dict[str, Any]):
+    """Upsert vector for a specific product (one product per vector)"""
     now = datetime.utcnow().isoformat()
-    # Check if there is an existing vector for this product
+    # Check if there is an existing vector for this company, product, and industry combination
     result = await session.execute(
-        select(VectorDB).where(VectorDB.product_id == product_id))
+        select(VectorDB).where(VectorDB.company_id == company_id,
+                               VectorDB.product_id == product_id,
+                               VectorDB.industry_category == industry_category)
+    )
     existing = result.scalars().first()
     if existing:
         existing.embedding = embedding
@@ -563,6 +1036,7 @@ async def _upsert_vector(session: AsyncSession, company_id: str,
             id=str(uuid.uuid4()),
             product_id=product_id,
             company_id=company_id,
+            industry_category=industry_category,
             embedding=embedding,
             metadata_json=metadata,
             created_at=now,
@@ -570,10 +1044,3 @@ async def _upsert_vector(session: AsyncSession, company_id: str,
         )
         session.add(vector)
         return vector, True
-
-
-# # Include the router in the app
-# app.include_router(router)
-
-# # Export the app for Vercel
-# handler = app

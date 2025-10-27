@@ -58,13 +58,12 @@ class Companies(Base):
     __tablename__ = "Companies"
     id = Column(String, primary_key=True, index=True)
     name = Column(String, nullable=False)
-    industry_category = Column(String, nullable=False)
-    location = Column(String, nullable=False)
-    capital_amount = Column(Integer, nullable=False)
-    revenue = Column(Integer, nullable=False)
-    company_certification_documents = Column(String, nullable=False)
-    patent = Column(Boolean, nullable=False)
-    delivery_time = Column(Integer, nullable=False)
+    industry_category = Column(ARRAY(String), nullable=False)
+    country = Column(String, nullable=False)
+    capital_amount = Column(Float, nullable=False)
+    revenue = Column(Float, nullable=False)
+    company_certification_documents = Column(ARRAY(String), nullable=False)
+    patent_count = Column(Integer, nullable=False)
     created_at = Column(String, nullable=False)
     updated_at = Column(String, nullable=False)
 
@@ -74,10 +73,9 @@ class Products(Base):
     id = Column(String, primary_key=True, index=True)
     company_id = Column(String, ForeignKey("Companies.id"))
     product_name = Column(String, nullable=False)
-    main_raw_materials = Column(String, nullable=False)
+    main_raw_materials = Column(ARRAY(String), nullable=False)
     product_standard = Column(ARRAY(String), nullable=False)
-    technical_advantages = Column(String, nullable=False)
-    product_certifications = Column(ARRAY(String), nullable=False)
+    technical_advantages = Column(ARRAY(String), nullable=False)
     created_at = Column(String, nullable=False)
     updated_at = Column(String, nullable=False)
 
@@ -85,8 +83,11 @@ class Products(Base):
 class VectorDB(Base):
     __tablename__ = "VectorDB"
     id = Column(String, primary_key=True, index=True)
-    product_id = Column(String, ForeignKey("Products.id"))
+    product_id = Column(String, ForeignKey("Products.id"),
+                        nullable=False)  # One vector per product
     company_id = Column(String, ForeignKey("Companies.id"))
+    industry_category = Column(String,
+                               nullable=False)  # Single industry per vector
     embedding = Column(Vector(1536))
     metadata_json = Column(JSON)
     created_at = Column(String, nullable=False)
