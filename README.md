@@ -56,7 +56,7 @@ This project provides an intuitive, production-ready API for **semantic search**
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/Semantic_search_V2.git
+git clone https://github.com/Phoenix-dev11/Semantic_search_V2.git
 
 # Navigate to the project directory
 cd Semantic_search_V2
