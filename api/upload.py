@@ -75,7 +75,7 @@ def convert_chinese_number_to_int(value: str,
 
     # Convert to billions unit if requested
     if unit_billions:
-        return result / (10**9)  # Use division for float result
+        return result / (10**8)  # Use division for float result
 
     return result
 
