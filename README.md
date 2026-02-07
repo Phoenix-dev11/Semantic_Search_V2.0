@@ -1,4 +1,4 @@
-# 🧭 Semantic Search API [Project ID: P-SEMSEARCH]
+# 🧭 Semantic Search API [Project ID: P-697]
 
 A FastAPI-based semantic search system that processes company and product data from Excel/CSV, generates AI embeddings with OpenAI, and enables intelligent search via PostgreSQL + pgvector.
 
@@ -167,10 +167,10 @@ POST /api/search
 
 ## 📬 Contact
 
-- **Author:** Your Name  
-- **Email:** your.email@example.com  
-- **GitHub:** @yourgithub  
-- **Website/Portfolio:** yourwebsite.com  
+- **Author:** Hiroshi Nagaya
+- **Email:** phoenixryan1111@gmail.com  
+- **GitHub:** @Phoenix-dev11
+- **Website/Portfolio:** hiroshi-nagaya.vercel.app 
 
 *(Replace with your details.)*
 
